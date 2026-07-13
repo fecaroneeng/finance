@@ -1188,3 +1188,282 @@ textarea.form-input {
   padding: 3px 14px 0;
   line-height: 1.4;
 }
+
+/* ============================================================
+   GASTOS DIÁRIOS — Extrato estilo bancário
+   ============================================================ */
+.gd-filters {
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.gd-period-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.gd-pill {
+  padding: 6px 14px;
+  border-radius: 100px;
+  border: 1.5px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.18s;
+  white-space: nowrap;
+}
+
+.gd-pill:hover { background: var(--border); color: var(--text); }
+.gd-pill.active {
+  background: var(--navy);
+  color: #fff;
+  border-color: var(--navy);
+}
+
+.gd-custom-range {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.gd-period-summary {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  border-left: 3px solid var(--accent);
+}
+
+.gd-summary-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.gd-summary-total strong {
+  font-size: 1.1rem;
+  font-family: 'DM Mono', monospace;
+  color: var(--danger);
+}
+
+.gd-summary-avg {
+  font-size: 0.75rem;
+  color: var(--text-3);
+  margin-top: 2px;
+}
+
+.gd-list { display: flex; flex-direction: column; gap: 4px; }
+
+.gd-empty {
+  text-align: center;
+  padding: 32px;
+  color: var(--text-3);
+  font-size: 0.88rem;
+}
+
+.gd-day-group {
+  background: var(--surface);
+  border-radius: var(--r);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.gd-day-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--navy);
+  color: #fff;
+}
+
+.gd-day-date {
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.gd-day-total {
+  font-size: 0.88rem;
+  font-weight: 700;
+  font-family: 'DM Mono', monospace;
+  color: rgba(255,255,255,0.85);
+}
+
+.gd-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  gap: 10px;
+  transition: background 0.15s;
+}
+
+.gd-item:last-child { border-bottom: none; }
+.gd-item:hover { background: var(--surface-2); }
+
+.gd-item-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.gd-item-cat {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-2);
+}
+
+.gd-item-desc {
+  font-size: 0.88rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gd-item-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.gd-item-val {
+  font-size: 0.95rem;
+  font-weight: 700;
+  font-family: 'DM Mono', monospace;
+  color: var(--danger);
+  white-space: nowrap;
+}
+
+.gd-item-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.gd-item:hover .gd-item-actions { opacity: 1; }
+
+.gd-item-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  cursor: pointer;
+  font-size: 0.82rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.gd-item-btn:hover { background: var(--border); }
+.gd-item-btn-del:hover { background: rgba(240,72,58,0.15); }
+
+/* Mobile: sempre mostrar ações */
+@media (max-width: 767px) {
+  .gd-item-actions { opacity: 1; }
+  .gd-item-val { font-size: 0.88rem; }
+}
+
+/* ============================================================
+   GASTOS RECENTES (Dashboard)
+   ============================================================ */
+.gasto-recente-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  gap: 10px;
+}
+.gasto-recente-item:last-child { border-bottom: none; }
+.gasto-recente-left { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.gasto-recente-cat { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); }
+.gasto-recente-desc { font-size: 0.85rem; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gasto-recente-val { font-size: 0.9rem; font-weight: 700; font-family: 'DM Mono', monospace; color: var(--danger); white-space: nowrap; }
+
+/* ============================================================
+   ORÇAMENTO PLANNER
+   ============================================================ */
+.orc-planner-card { background: linear-gradient(135deg, var(--navy), var(--navy-2)); color: #fff; }
+.orc-planner-card .card-title { color: #fff; }
+
+.orc-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.orc-flow-item {
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: var(--r);
+  padding: 12px 16px;
+  min-width: 140px;
+  flex: 1;
+}
+
+.orc-flow-item.orc-flow-saldo {
+  background: rgba(16,201,160,0.18);
+  border-color: var(--accent);
+}
+
+.orc-flow-item.orc-flow-danger { background: rgba(240,72,58,0.18); border-color: var(--danger); }
+
+.orc-flow-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(255,255,255,0.6);
+  margin-bottom: 4px;
+}
+
+.orc-flow-val {
+  font-size: 1rem;
+  font-weight: 800;
+  font-family: 'DM Mono', monospace;
+  color: #fff;
+}
+
+.orc-flow-neg { color: rgba(255,120,100,0.9); }
+.orc-flow-sub { font-size: 0.68rem; color: rgba(255,255,255,0.55); margin-top: 4px; }
+
+.orc-flow-arrow {
+  font-size: 1.2rem;
+  color: rgba(255,255,255,0.4);
+  flex-shrink: 0;
+  padding: 0 2px;
+}
+
+@media (max-width: 767px) {
+  .orc-flow { flex-direction: column; }
+  .orc-flow-item { width: 100%; min-width: 0; }
+  .orc-flow-arrow { transform: none; }
+}
+
+/* ============================================================
+   HISTÓRICO FILTER PILLS (reutiliza .gd-pill)
+   ============================================================ */
+#hist-type-filters { display: flex; flex-wrap: wrap; gap: 6px; }
