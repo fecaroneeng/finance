@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // users collection: only the authenticated user can read/write their own documents and subcollections
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      // subcollections (entries, budgets) inherit protection because they are under user doc
+      match /{subCollection}/{docId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+
+    // other collections (if any) default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
