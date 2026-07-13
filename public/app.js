@@ -1048,20 +1048,55 @@ const renderKPIs = () => {
   const totals = calcTotals(sel);
   const orc    = calcOrcamentoTotal(sel);
   const totalGasto  = totals.variableTotal + totals.fixedTotal + totals.investTotal;
-  const saldoGastar = orc.total - totalGasto;
+  const saldoAtual  = totals.realReceita - totalGasto;
+  const orcLivre    = orc.total - totalGasto; // orçamento livre = orçado - gasto
 
   if (el('k-variable'))    el('k-variable').textContent    = formatMoney(totals.variableTotal);
   if (el('k-fixed'))       el('k-fixed').textContent       = formatMoney(totals.fixedTotal);
   if (el('k-invest'))      el('k-invest').textContent      = formatMoney(totals.investTotal);
   if (el('k-total-gasto')) el('k-total-gasto').textContent = formatMoney(totalGasto);
   if (el('k-receita'))     el('k-receita').textContent     = formatMoney(totals.realReceita);
+  if (el('k-saldo-atual')) {
+    el('k-saldo-atual').textContent = formatMoney(saldoAtual);
+    el('k-saldo-atual').style.color = saldoAtual >= 0 ? 'var(--accent)' : 'var(--danger)';
+  }
   if (el('k-budget-net')) {
-    el('k-budget-net').textContent = formatMoney(saldoGastar);
-    el('k-budget-net').style.color = saldoGastar >= 0 ? 'var(--accent)' : 'var(--danger)';
+    el('k-budget-net').textContent = formatMoney(orcLivre);
+    el('k-budget-net').style.color = orcLivre >= 0 ? 'var(--accent)' : 'var(--danger)';
   }
   if (el('k-orcamento-total')) el('k-orcamento-total').textContent = formatMoney(orc.total);
   if (el('k-budget')) el('k-budget').textContent = formatMoney(orc.orcVariavel);
-  if (el('k-net'))    el('k-net').textContent    = formatMoney(totals.realReceita - totalGasto);
+  if (el('k-net'))    el('k-net').textContent    = formatMoney(saldoAtual);
+
+  // Gastos recentes (últimas 5 despesas variáveis do mês)
+  renderGastosRecentes(sel);
+};
+
+const renderGastosRecentes = (sel) => {
+  const container = el('gastos-recentes-list');
+  if (!container) return;
+  const rows = [];
+  state.entries.forEach(e => {
+    if (!isValidEntry(e) || e.type !== 'expense' || e.fixed) return;
+    if (e.seriesId) return; // skip parcel children — they appear by date
+    const budgetInfo = getBudgetForMonth((e.category||'').trim(), sel);
+    if (budgetInfo && budgetInfo.isFixed) return;
+    expandEntry(e, sel).forEach(inst => rows.push({ entry: e, value: inst.value, date: e.date }));
+  });
+  rows.sort((a,b) => new Date(b.date) - new Date(a.date));
+  const recent = rows.slice(0, 5);
+  if (!recent.length) {
+    container.innerHTML = '<div class="small muted" style="padding:12px 0">Nenhum gasto variável neste mês.</div>';
+    return;
+  }
+  container.innerHTML = recent.map(r => `
+    <div class="gasto-recente-item">
+      <div class="gasto-recente-left">
+        <span class="gasto-recente-cat">${escapeHtml(r.entry.category || '—')}</span>
+        <span class="gasto-recente-desc">${escapeHtml(r.entry.description || '')}</span>
+      </div>
+      <div class="gasto-recente-val">−${formatMoney(r.value)}</div>
+    </div>`).join('');
 };
 
 // ── renderVariableTable ──────────────────────────────────────────────────────
@@ -1536,24 +1571,121 @@ const renderBudgetTable = () => {
   }).sort();
   const monthLabelEl = el('budget-active-month');
   if (monthLabelEl) monthLabelEl.textContent = sel || 'todos';
-  if (cats.length === 0) { tbody.innerHTML = '<tr><td colspan="3" class="muted">Nenhum orçamento variável neste mês</td></tr>'; return; }
-  let total = 0;
+  if (cats.length === 0) { tbody.innerHTML = '<tr><td colspan="6" class="muted">Nenhum orçamento variável neste mês. Clique em "+ Nova Categoria" para começar.</td></tr>'; return; }
+  let totalOrc = 0, totalGasto = 0;
   cats.forEach(cat => {
     const b           = getBudgetForMonth(cat, sel);
-    const val         = Number(b.budget || 0);
+    const orcado      = Number(b.budget || 0);
     const isInvestCat = b.kind === 'investment';
-    total += val;
-    const hasMonthOverride = sel && state.monthlyHistory?.[sel]?.budgets?.[cat];
+    totalOrc += orcado;
+    // Calculate spent for this category
+    let gasto = 0;
+    if (isInvestCat) {
+      gasto = calcInvestByCategory(cat, sel);
+    } else {
+      state.entries.forEach(e => {
+        if (!isValidEntry(e) || e.type !== 'expense') return;
+        expandEntry(e, sel).forEach(inst => {
+          const eCat = (inst.entry.category && String(inst.entry.category).trim()) || '(Sem categoria)';
+          if (eCat !== cat) return;
+          const bi = getBudgetForMonth(eCat, sel);
+          if (inst.entry.fixed || (bi && bi.isFixed)) return;
+          gasto += Number(inst.value || 0);
+        });
+      });
+    }
+    totalGasto += gasto;
+    const restante = orcado - gasto;
+    const pct = orcado > 0 ? Math.min(100, Math.round((gasto/orcado)*100)) : (gasto > 0 ? 100 : 0);
+    let barColor = '#10b981';
+    if (pct > 100) barColor = '#ef4444';
+    else if (pct > 80) barColor = '#f59e0b';
     const badge = isInvestCat
-      ? ' <span style="font-size:0.65rem;background:rgba(139,92,246,0.12);color:var(--invest);padding:1px 6px;border-radius:4px;font-weight:700">💜 Meta Invest</span>'
-      : (hasMonthOverride ? '' : ' <span style="font-size:0.65rem;color:var(--text-3);font-weight:400">(padrão)</span>');
+      ? ' <span style="font-size:0.65rem;background:rgba(139,92,246,0.12);color:var(--invest);padding:1px 6px;border-radius:4px;font-weight:700">💜</span>'
+      : '';
     const tr = document.createElement('tr');
     if (isInvestCat) tr.style.background = 'rgba(139,92,246,0.03)';
-    tr.innerHTML = `<td>${escapeHtml(cat)}${badge}</td><td class="right">${formatMoney(val)}</td><td class="right"><button class="btn-ghost" style="background:${isInvestCat?'#6d28d9':'#334155'}" onclick="editBudget('${cat.replace(/'/g,"\'")}')">Editar</button><button class="btn-ghost" style="background:#ef4444;margin-left:4px" onclick="removeBudget('${cat.replace(/'/g,"\'")}')">Remover</button></td>`;
+    tr.innerHTML = `
+      <td>${escapeHtml(cat)}${badge}</td>
+      <td class="right">${formatMoney(orcado)}</td>
+      <td class="right" style="color:var(--danger)">${formatMoney(gasto)}</td>
+      <td class="right" style="color:${restante>=0?'var(--accent)':'var(--danger)';}">${formatMoney(restante)}</td>
+      <td class="right" style="min-width:100px">
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="flex:1;height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:${barColor};border-radius:3px;transition:width 0.3s"></div>
+          </div>
+          <span style="font-size:0.7rem;min-width:28px;color:var(--text-2)">${pct}%</span>
+        </div>
+      </td>
+      <td class="right">
+        <button class="btn-ghost" style="background:${isInvestCat?'#6d28d9':'#334155'}" onclick="editBudget('${cat.replace(/'/g,"\'")}')">Editar</button>
+        <button class="btn-ghost" style="background:#ef4444;margin-left:4px" onclick="removeBudget('${cat.replace(/'/g,"\'")}')">Remover</button>
+      </td>`;
     tbody.appendChild(tr);
   });
-  if (el('subtotal-budgets')) el('subtotal-budgets').innerHTML = '<strong>' + formatMoney(total) + '</strong>';
+  if (el('subtotal-budgets')) el('subtotal-budgets').innerHTML = '<strong>' + formatMoney(totalOrc) + '</strong>';
+  if (el('subtotal-budgets-gasto')) el('subtotal-budgets-gasto').innerHTML = '<strong>' + formatMoney(totalGasto) + '</strong>';
+  if (el('subtotal-budgets-restante')) {
+    const rest = totalOrc - totalGasto;
+    el('subtotal-budgets-restante').innerHTML = '<strong style="color:' + (rest>=0?'var(--accent)':'var(--danger)') + '">' + formatMoney(rest) + '</strong>';
+  }
+  // Update planner
+  renderOrcamentoPlanner();
 };
+
+// ─── ORÇAMENTO PLANNER ──────────────────────────────────────────────────────
+const renderOrcamentoPlanner = () => {
+  const grid = el('orc-flow-grid');
+  const mesLbl = el('orc-mes-label');
+  if (!grid) return;
+  const sel = selectedFilterMonth !== 'all' ? selectedFilterMonth : null;
+  const month = sel || new Date().toISOString().slice(0,7);
+  if (mesLbl) mesLbl.textContent = '· ' + month;
+
+  const totals = calcTotals(sel);
+  const receita = totals.realReceita;
+  const fixos = totals.fixedTotal;
+  // parcelas do mês
+  let parcelas = 0;
+  state.entries.forEach(e => {
+    if (!isValidEntry(e) || !e.seriesId) return;
+    const comp = e.competence || yyyyMmFromDate(e.date);
+    if (sel && comp !== sel) return;
+    if (!sel) return;
+    parcelas += Number(e.value || 0);
+  });
+  const saldoDisponivel = receita - fixos - parcelas;
+  const orc = calcOrcamentoTotal(sel);
+  const orcVariavel = orc.orcVariavel;
+  const gastoVariavel = totals.variableTotal;
+  const livreOrcamento = orcVariavel - gastoVariavel;
+
+  grid.innerHTML = `
+    <div class="orc-flow-item orc-flow-receita">
+      <div class="orc-flow-label">💰 Receita</div>
+      <div class="orc-flow-val">${formatMoney(receita)}</div>
+    </div>
+    <div class="orc-flow-arrow">↓</div>
+    <div class="orc-flow-item orc-flow-fixo">
+      <div class="orc-flow-label">🔒 Despesas Fixas</div>
+      <div class="orc-flow-val orc-flow-neg">−${formatMoney(fixos)}</div>
+    </div>
+    <div class="orc-flow-arrow">↓</div>
+    <div class="orc-flow-item orc-flow-parcela">
+      <div class="orc-flow-label">📋 Parcelas</div>
+      <div class="orc-flow-val orc-flow-neg">−${formatMoney(parcelas)}</div>
+    </div>
+    <div class="orc-flow-arrow">↓</div>
+    <div class="orc-flow-item orc-flow-saldo${saldoDisponivel < 0 ? ' orc-flow-danger' : ''}">
+      <div class="orc-flow-label">✅ Saldo Disponível</div>
+      <div class="orc-flow-val">${formatMoney(saldoDisponivel)}</div>
+      ${orcVariavel > 0 ? `<div class="orc-flow-sub">Orçado: ${formatMoney(orcVariavel)} · Livre: <strong style="color:${livreOrcamento>=0?'var(--accent)':'var(--danger)'}">${formatMoney(livreOrcamento)}</strong></div>` : '<div class="orc-flow-sub">Distribua este valor entre suas categorias ↓</div>'}
+    </div>`;
+};
+
+// Histórico type filter state (default = 'expense' = despesas)
+let histTypeFilter = 'expense';
 
 const renderAllEntriesTable = () => {
   const tbody = qs('#entries-table-duplicate tbody');
@@ -1567,28 +1699,45 @@ const renderAllEntriesTable = () => {
       const hasChildren = state.entries.some(ch => ch && ch.seriesId === e.id);
       if (hasChildren) return;
     }
-    // ✅ expandEntry handles recurring correctly for any filterMonth
     expandEntry(e, sel).forEach(inst => {
       displayRows.push({ entry: e, competence: inst.competence, value: inst.value });
     });
   });
   displayRows.sort((a, b) => new Date(b.entry.date) - new Date(a.entry.date));
-  if (displayRows.length === 0) { tbody.innerHTML = '<tr><td colspan="7" class="muted">Nenhum lançamento</td></tr>'; return; }
+
+  // Apply type filter
+  const filtered = displayRows.filter(({ entry: e }) => {
+    if (histTypeFilter === 'all') return true;
+    if (histTypeFilter === 'income') return e.type === 'income';
+    if (histTypeFilter === 'investment') return e.type === 'investment';
+    if (histTypeFilter === 'fixed') return e.type === 'expense' && e.fixed;
+    if (histTypeFilter === 'parcela') return !!(e.seriesId || (e.series && Number(e.series.total) > 1));
+    if (histTypeFilter === 'expense') {
+      // Despesas variáveis (não fixas, não parcelas do tipo série-pai)
+      return e.type === 'expense';
+    }
+    return true;
+  });
+
+  if (filtered.length === 0) { tbody.innerHTML = '<tr><td colspan="7" class="muted">Nenhum lançamento neste filtro.</td></tr>'; return; }
   let total = 0;
-  displayRows.forEach(({ entry: e, competence: comp, value }) => {
+  filtered.forEach(({ entry: e, competence: comp, value }) => {
     total += Number(value || 0);
-    const typeLabel = e.type === 'income' ? 'Receita' : (e.type === 'investment' ? 'Investimento' : 'Despesa');
+    const typeLabel = e.type === 'income' ? 'Receita' : (e.type === 'investment' ? 'Investimento' : (e.fixed ? 'Fixa' : (e.seriesId ? 'Parcela' : 'Despesa')));
     const recurBadge = e.recurring ? ' 🔄' : '';
     const tr = document.createElement('tr');
     if (e.type === 'investment') tr.style.borderLeft = '3px solid rgba(139,92,246,0.4)';
+    if (e.type === 'income') tr.style.borderLeft = '3px solid rgba(59,130,246,0.4)';
     const tdComp = document.createElement('td'); tdComp.textContent = comp;
     const tdDate = document.createElement('td'); tdDate.textContent = formatDateISO(e.date);
     const tdType = document.createElement('td'); tdType.textContent = typeLabel + recurBadge;
     if (e.type === 'investment') tdType.style.color = 'var(--invest)';
+    if (e.type === 'income') tdType.style.color = 'var(--income)';
     const tdCat  = document.createElement('td'); tdCat.textContent  = escapeHtml(e.category || '');
     const tdDesc = document.createElement('td'); tdDesc.textContent = escapeHtml(e.description || '');
     const tdVal  = document.createElement('td'); tdVal.className = 'right'; tdVal.innerHTML = formatMoney(value);
     if (e.type === 'investment') tdVal.style.color = 'var(--invest)';
+    if (e.type === 'income') tdVal.style.color = 'var(--income)';
     const tdAct  = document.createElement('td'); tdAct.className = 'right';
     const bEdit  = document.createElement('button'); bEdit.className = 'btn-ghost'; bEdit.style.background = '#334155'; bEdit.textContent = 'Editar'; bEdit.addEventListener('click', () => editEntry(e.id));
     const bDel   = document.createElement('button'); bDel.className  = 'btn-ghost'; bDel.style.background  = '#ef4444'; bDel.style.marginLeft = '6px'; bDel.textContent = 'Excluir'; bDel.addEventListener('click', () => deleteEntry(e.id));
@@ -1655,6 +1804,156 @@ const renderMonthlyProjection = () => {
   } catch(e) { console.warn('Chart error:', e); }
 };
 
+// ─── GASTOS DIÁRIOS ──────────────────────────────────────────────────────────
+let gdPeriod = 'month';
+let gdFromDate = null, gdToDate = null;
+let gdCatFilter = '';
+
+const getGDDateRange = () => {
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0,10);
+  const monthStr = now.toISOString().slice(0,7);
+  if (gdPeriod === 'today') return { from: todayStr, to: todayStr };
+  if (gdPeriod === '7d') {
+    const d = new Date(now); d.setDate(d.getDate()-6);
+    return { from: d.toISOString().slice(0,10), to: todayStr };
+  }
+  if (gdPeriod === '30d') {
+    const d = new Date(now); d.setDate(d.getDate()-29);
+    return { from: d.toISOString().slice(0,10), to: todayStr };
+  }
+  if (gdPeriod === 'month') {
+    return { from: monthStr + '-01', to: monthStr + '-31' };
+  }
+  if (gdPeriod === 'prev-month') {
+    const d = new Date(now.getFullYear(), now.getMonth()-1, 1);
+    const m = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+    return { from: m + '-01', to: m + '-31' };
+  }
+  if (gdPeriod === 'custom' && gdFromDate && gdToDate) {
+    return { from: gdFromDate, to: gdToDate };
+  }
+  return { from: monthStr + '-01', to: monthStr + '-31' };
+};
+
+const renderGastosDiarios = () => {
+  const listEl     = el('gd-list');
+  const summaryEl  = el('gd-period-summary');
+  const catFilter  = el('gd-filter-cat');
+  if (!listEl) return;
+
+  const { from, to } = getGDDateRange();
+
+  // Get all variable daily expenses in range
+  const rows = [];
+  state.entries.forEach(e => {
+    if (!isValidEntry(e) || e.type !== 'expense') return;
+    if (e.fixed) return;
+    if (e.series && Number(e.series.total) > 1 && !e.seriesId) return; // skip series parents
+    const budgetInfo = getBudgetForMonth((e.category||'').trim(), yyyyMmFromDate(e.date));
+    if (budgetInfo && budgetInfo.isFixed) return;
+    const d = e.date ? e.date.slice(0,10) : '';
+    if (!d || d < from || d > to) return;
+    if (gdCatFilter && (e.category||'') !== gdCatFilter) return;
+    rows.push({ entry: e, date: d, value: Number(e.value||0) });
+  });
+
+  // Populate category filter
+  if (catFilter) {
+    const cats = [...new Set(rows.map(r => r.entry.category||'').filter(Boolean))].sort();
+    const prev = catFilter.value;
+    catFilter.innerHTML = '<option value="">Todas</option>' + cats.map(c => `<option value="${escapeHtml(c)}"${c===prev?' selected':''}>${escapeHtml(c)}</option>`).join('');
+  }
+
+  rows.sort((a,b) => b.date.localeCompare(a.date));
+
+  const totalPeriod = rows.reduce((s,r) => s+r.value, 0);
+  if (summaryEl) {
+    const dayCount = rows.length ? new Set(rows.map(r=>r.date)).size : 0;
+    summaryEl.innerHTML = totalPeriod > 0
+      ? `<div class="gd-summary-total">
+           <span>Total no período:</span>
+           <strong>${formatMoney(totalPeriod)}</strong>
+         </div>
+         <div class="gd-summary-avg">${dayCount} dia(s) com gastos · média ${formatMoney(dayCount?totalPeriod/dayCount:0)}/dia</div>`
+      : '<div class="gd-summary-total" style="color:var(--text-3)">Nenhum gasto neste período.</div>';
+  }
+
+  if (!rows.length) { listEl.innerHTML = '<div class="gd-empty">Nenhum gasto variável neste período.</div>'; return; }
+
+  // Group by date
+  const byDate = {};
+  rows.forEach(r => { (byDate[r.date] = byDate[r.date]||[]).push(r); });
+  const dates = Object.keys(byDate).sort().reverse();
+
+  listEl.innerHTML = dates.map(date => {
+    const items = byDate[date];
+    const dayTotal = items.reduce((s,r)=>s+r.value,0);
+    const [y,m,d] = date.split('-');
+    const dateLabel = `${d}/${m}/${y}`;
+    const itemsHtml = items.map(r => `
+      <div class="gd-item">
+        <div class="gd-item-left">
+          <span class="gd-item-cat">${escapeHtml(r.entry.category||'—')}</span>
+          <span class="gd-item-desc">${escapeHtml(r.entry.description||'')}</span>
+        </div>
+        <div class="gd-item-right">
+          <span class="gd-item-val">−${formatMoney(r.value)}</span>
+          <div class="gd-item-actions">
+            <button class="gd-item-btn" onclick="editEntry('${r.entry.id}')">✏️</button>
+            <button class="gd-item-btn gd-item-btn-del" onclick="deleteEntry('${r.entry.id}')">🗑</button>
+          </div>
+        </div>
+      </div>`).join('');
+    return `
+      <div class="gd-day-group">
+        <div class="gd-day-header">
+          <span class="gd-day-date">${dateLabel}</span>
+          <span class="gd-day-total">${formatMoney(dayTotal)}</span>
+        </div>
+        ${itemsHtml}
+      </div>`;
+  }).join('');
+};
+
+const initGastosDiarios = () => {
+  // Period pills
+  document.addEventListener('click', e => {
+    const pill = e.target.closest('[data-period]');
+    if (!pill) return;
+    gdPeriod = pill.getAttribute('data-period');
+    document.querySelectorAll('[data-period]').forEach(p => p.classList.remove('active'));
+    pill.classList.add('active');
+    const customRange = el('gd-custom-range');
+    if (customRange) customRange.style.display = gdPeriod === 'custom' ? 'flex' : 'none';
+    if (gdPeriod !== 'custom') renderGastosDiarios();
+  });
+
+  // Custom range apply
+  const applyBtn = el('gd-apply-custom');
+  if (applyBtn) applyBtn.addEventListener('click', () => {
+    gdFromDate = el('gd-from')?.value;
+    gdToDate   = el('gd-to')?.value;
+    if (gdFromDate && gdToDate) renderGastosDiarios();
+  });
+
+  // Category filter
+  const catSel = el('gd-filter-cat');
+  if (catSel) catSel.addEventListener('change', e => { gdCatFilter = e.target.value; renderGastosDiarios(); });
+};
+
+// Wire up historico type filter pills
+const initHistFilters = () => {
+  document.addEventListener('click', e => {
+    const pill = e.target.closest('[data-htype]');
+    if (!pill) return;
+    histTypeFilter = pill.getAttribute('data-htype');
+    document.querySelectorAll('[data-htype]').forEach(p => p.classList.remove('active'));
+    pill.classList.add('active');
+    renderAllEntriesTable();
+  });
+};
+
 const renderAll = () => {
   try {
     try { populateCategorySelect(); } catch(e) {}
@@ -1669,6 +1968,8 @@ const renderAll = () => {
     renderBudgetTable();
     renderAllEntriesTable();
     renderMonthlyProjection();
+    try { renderGastosDiarios(); } catch(e) {}
+    try { renderOrcamentoPlanner(); } catch(e) {}
   } catch(e) { console.error('renderAll:', e); }
 };
 
@@ -1826,6 +2127,8 @@ const openNewInvestmentCategoryModal = () => {
   });
 };
 window.openNewInvestmentCategoryModal = openNewInvestmentCategoryModal;
+window.renderGastosDiarios = renderGastosDiarios;
+window.renderOrcamentoPlanner = renderOrcamentoPlanner;
 
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
 let entriesUnsub = null, budgetsUnsub = null;
@@ -1965,6 +2268,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   populateCategorySelect();
   renderAll();
+  initGastosDiarios();
+  initHistFilters();
 });
 
 // ─── EXPOSE GLOBALS ───────────────────────────────────────────────────────────
