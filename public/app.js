@@ -1609,7 +1609,7 @@ const renderBudgetTable = () => {
       <td>${escapeHtml(cat)}${badge}</td>
       <td class="right">${formatMoney(orcado)}</td>
       <td class="right" style="color:var(--danger)">${formatMoney(gasto)}</td>
-      <td class="right" style="color:${restante>=0?'var(--accent)':'var(--danger)';}">${formatMoney(restante)}</td>
+      <td class="right" style="color:${restante>=0?'var(--accent)':'var(--danger)'}">${formatMoney(restante)}</td>
       <td class="right" style="min-width:100px">
         <div style="display:flex;align-items:center;gap:6px">
           <div style="flex:1;height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden">
