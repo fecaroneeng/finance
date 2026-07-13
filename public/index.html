@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0D1F3C" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Finance · Controle</title>
+
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+
+<body>
+
+  <!-- ===================== TOP HEADER ===================== -->
+  <header class="top-header">
+    <div class="app-logo">Finance<span>·</span></div>
+
+    <!-- Desktop tabs -->
+    <nav class="desktop-tabs" style="display:none; flex:1;">
+      <button class="nav-tab-btn tab-btn active" data-target="inicial">Início</button>
+      <button class="nav-tab-btn tab-btn" data-target="contas">Contas</button>
+      <button class="nav-tab-btn tab-btn" data-target="orcamentos">Orçamentos</button>
+      <button class="nav-tab-btn tab-btn" data-target="receitas">Receitas</button>
+      <button class="nav-tab-btn tab-btn" data-target="visao-mensal">Visão Mensal</button>
+      <button class="nav-tab-btn tab-btn" data-target="tabela">Histórico</button>
+    </nav>
+
+    <div class="month-select-wrap">
+      <select id="filter-month"></select>
+    </div>
+
+    <div class="header-right">
+      <div class="sync-dot" title="Status" id="sync-dot"></div>
+      <span id="sync-status" style="display:none">Offline</span>
+
+      <div id="auth-guest" style="display:flex;align-items:center;gap:6px">
+        <input id="auth-email" type="email" placeholder="email" class="form-input" style="width:110px;padding:5px 8px;font-size:0.75rem" />
+        <input id="auth-pass" type="password" placeholder="senha" class="form-input" style="width:90px;padding:5px 8px;font-size:0.75rem" />
+        <button id="btn-signin" class="btn-auth">Entrar</button>
+        <button id="btn-signup" class="btn-auth">Criar</button>
+      </div>
+
+      <div id="auth-user" style="display:none;align-items:center;gap:8px">
+        <span id="user-email-display" class="small"></span>
+        <button id="btn-signout" class="btn-signout">Sair</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===================== MAIN CONTENT ===================== -->
+  <main>
+
+    <!-- ========= PANEL 1 · INÍCIO ========= -->
+    <section id="panel-inicial" class="panel active">
+
+      <div class="progress-card">
+        <div class="prog-label" id="global-progress-label">Progresso do mês</div>
+        <div class="prog-title" id="progress-title-display">R$ 0,00 / R$ 0,00</div>
+        <div class="prog-track global-progress-bar-container">
+          <div class="prog-bar global-progress-bar" id="global-progress-bar" style="width:0%;background:var(--accent)">0%</div>
+        </div>
+      </div>
+
+      <!-- KPIs Row 1: spending breakdown -->
+      <div class="kpi-row kpi-row-4">
+        <div class="kpi danger-kpi">
+          <div class="label">Variáveis</div>
+          <strong id="k-variable" class="money">R$ 0,00</strong>
+        </div>
+        <div class="kpi warn-kpi">
+          <div class="label">Fixas</div>
+          <strong id="k-fixed" class="money">R$ 0,00</strong>
+        </div>
+        <div class="kpi invest-kpi">
+          <div class="label">Investimentos</div>
+          <strong id="k-invest" class="money" style="color:var(--invest)">R$ 0,00</strong>
+        </div>
+        <div class="kpi total-kpi">
+          <div class="label">Total Gasto</div>
+          <strong id="k-total-gasto" class="money">R$ 0,00</strong>
+        </div>
+      </div>
+
+      <!-- KPIs Row 2: income / balance / budget -->
+      <div class="kpi-row kpi-row-3">
+        <div class="kpi income-kpi">
+          <div class="label">Receita</div>
+          <strong id="k-receita" class="money">R$ 0,00</strong>
+        </div>
+        <div class="kpi saldo-kpi">
+          <div class="label">Saldo p/ Gastar</div>
+          <div class="label-sub">Orçamento − Total Gasto</div>
+          <strong id="k-budget-net" class="money">R$ 0,00</strong>
+        </div>
+        <div class="kpi net-kpi">
+          <div class="label">Orçamento Total</div>
+          <div class="label-sub">Variáveis + Fixas + Invest</div>
+          <strong id="k-orcamento-total" class="money">R$ 0,00</strong>
+        </div>
+      </div>
+
+      <!-- Legacy hidden compat -->
+      <span id="k-budget" hidden>0</span>
+      <span id="k-net"    hidden>0</span>
+
+      <!-- Variable expenses + investment meta table -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Despesas Variáveis &amp; Meta de Investimentos</span>
+          <span class="small muted">orçado × realizado por categoria</span>
+        </div>
+        <div class="table-wrap">
+          <table id="variable-table">
+            <thead>
+              <tr>
+                <th>Categoria</th>
+                <th class="right">Realizado</th>
+                <th class="right">Orçado / Meta</th>
+                <th class="right" style="min-width:120px">Progresso</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+            <tfoot>
+              <tr>
+                <td><strong>Subtotal despesas variáveis</strong></td>
+                <td class="right" id="subtotal-variable-table"><strong>R$ 0,00</strong></td>
+                <td class="right" id="subtotal-variable-budget"><strong>R$ 0,00</strong></td>
+                <td></td><td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========= PANEL 2 · CONTAS FIXAS & PARCELAS ========= -->
+    <section id="panel-contas" class="panel">
+
+      <div class="card">
+        <div class="section-header">
+          <h3>Parcelamentos</h3>
+        </div>
+        <div class="table-wrap">
+          <table id="parcelas-table">
+            <thead>
+              <tr><th>Início</th><th>Categoria</th><th>Descrição</th><th>Parcela</th><th class="right">Valor</th><th></th></tr>
+            </thead>
+            <tbody></tbody>
+            <tfoot>
+              <tr>
+                <td><strong>Subtotal</strong></td><td></td><td></td><td></td>
+                <td class="right" id="subtotal-parcelas"><strong>R$ 0,00</strong></td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-header">
+          <h3>Contas Fixas (Despesas)</h3>
+          <span class="small muted">orçamentos marcados como fixos · mês: <strong id="fixed-active-month">—</strong></span>
+        </div>
+        <p class="small muted" style="margin-bottom:10px;padding:6px 10px;background:var(--surface-2);border-radius:6px;border-left:3px solid var(--warning)">
+          ⚠️ Investimentos recorrentes aparecem na aba <strong>Receitas/Investimentos</strong>, não aqui.
+        </p>
+        <div class="table-wrap">
+          <table id="fixed-list-table">
+            <thead>
+              <tr><th>Categoria</th><th class="right">Valor padrão</th><th></th></tr>
+            </thead>
+            <tbody></tbody>
+            <tfoot>
+              <tr>
+                <td><strong>Subtotal</strong></td>
+                <td class="right" id="subtotal-fixed-list"><strong>R$ 0,00</strong></td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========= PANEL 3 · ORÇAMENTOS ========= -->
+    <section id="panel-orcamentos" class="panel">
+      <div class="card">
+        <div class="section-header" style="flex-wrap:wrap;gap:8px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <h3>Orçamentos</h3>
+            <span style="display:inline-flex;align-items:center;gap:5px;background:rgba(16,201,160,0.12);border:1px solid rgba(16,201,160,0.3);border-radius:6px;padding:3px 10px;font-size:0.75rem;font-weight:600;color:var(--accent)">
+              📅 Mês: <span id="budget-active-month">—</span>
+            </span>
+          </div>
+          <div class="toolbar">
+            <button id="btn-inherit-budget" class="btn-tool" style="color:var(--accent);border-color:rgba(16,201,160,0.4)"
+              onclick="(function(){
+                const sel=(typeof selectedFilterMonth!=='undefined'&&selectedFilterMonth!=='all')?selectedFilterMonth:new Date().toISOString().slice(0,7);
+                const parts=sel.split('-').map(Number);
+                const prevDate=new Date(parts[0],parts[1]-2,1);
+                const prev=prevDate.getFullYear()+'-'+String(prevDate.getMonth()+1).padStart(2,'0');
+                if(typeof inheritBudgetFrom==='function')inheritBudgetFrom(prev,sel);
+              })()">↙ Herdar mês anterior</button>
+            <button id="btn-open-budgets-modal" class="btn btn-primary btn-sm">+ Nova Categoria / Meta</button>
+          </div>
+        </div>
+        <p class="small muted" style="margin-bottom:12px;padding:8px 10px;background:var(--surface-2);border-radius:6px;border-left:3px solid var(--accent)">
+          Cada mês tem seus próprios valores. Editar aqui altera <strong>apenas o mês selecionado</strong>.
+          Para criar uma <strong>meta de investimentos</strong>, clique em "+ Nova Categoria / Meta" e selecione "Meta de Investimentos 💜".
+        </p>
+        <div class="table-wrap">
+          <table id="modal-budgets-table">
+            <thead>
+              <tr><th>Categoria</th><th class="right">Orçamento / Meta</th><th></th></tr>
+            </thead>
+            <tbody></tbody>
+            <tfoot>
+              <tr>
+                <td><strong>Subtotal</strong></td>
+                <td class="right" id="subtotal-budgets"><strong>R$ 0,00</strong></td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========= PANEL 4 · RECEITAS & INVESTIMENTOS ========= -->
+    <section id="panel-receitas" class="panel">
+
+      <div class="card">
+        <div class="section-header">
+          <h3>Receitas</h3>
+        </div>
+        <div class="table-wrap">
+          <table id="incomes-table">
+            <thead>
+              <tr><th>Data</th><th>Categoria</th><th>Descrição</th><th class="right">Valor</th><th></th></tr>
+            </thead>
+            <tbody></tbody>
+            <tfoot>
+              <tr>
+                <td><strong>Subtotal</strong></td><td></td><td></td>
+                <td class="right" id="subtotal-incomes"><strong>R$ 0,00</strong></td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
+      <div class="card" style="border-top:3px solid rgba(139,92,246,0.5)">
+        <div class="section-header">
+          <h3>Investimentos <span style="font-size:0.75rem;color:var(--invest);background:rgba(139,92,246,0.1);padding:2px 8px;border-radius:6px;margin-left:6px">💜</span></h3>
+          <span class="small muted">🔄 = recorrente mensal</span>
+        </div>
+        <p class="small muted" style="margin-bottom:10px;padding:6px 10px;background:rgba(139,92,246,0.06);border-radius:6px;border-left:3px solid rgba(139,92,246,0.4)">
+          Investimentos recorrentes se expandem automaticamente para cada mês a partir da competência inicial — inclusive meses futuros. Excluir um recorrente remove-o de <strong>todos os meses</strong>.
+        </p>
+        <div class="table-wrap">
+          <table id="investments-table">
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Categoria</th>
+                <th>Descrição</th>
+                <th class="right">Valor</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+            <tfoot>
+              <tr>
+                <td><strong>Subtotal</strong></td><td></td><td></td>
+                <td class="right" id="subtotal-investments" style="color:var(--invest)"><strong>R$ 0,00</strong></td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========= PANEL 5 · VISÃO MENSAL ========= -->
+    <section id="panel-visao-mensal" class="panel">
+      <div class="card">
+        <div class="section-header">
+          <h3>Visão Mês a Mês · 12 meses</h3>
+          <button id="btn-export-monthly" class="btn-tool">↑ Excel</button>
+        </div>
+        <canvas id="monthlyChart" style="max-height:300px;margin-bottom:16px"></canvas>
+        <div class="table-wrap">
+          <table id="monthly-projection">
+            <thead>
+              <tr>
+                <th>Mês</th>
+                <th class="right">Entradas</th>
+                <th class="right">Saídas</th>
+                <th class="right">Planejado</th>
+                <th class="right">Saldo</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+            <tfoot>
+              <tr>
+                <td><strong>Total 12m</strong></td>
+                <td class="right" id="subtotal-monthly-entradas"><strong>R$ 0,00</strong></td>
+                <td class="right" id="subtotal-monthly-saidas"><strong>R$ 0,00</strong></td>
+                <td class="right" id="subtotal-monthly-planejado"><strong>R$ 0,00</strong></td>
+                <td class="right" id="subtotal-monthly-saldo"><strong>R$ 0,00</strong></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========= PANEL 6 · HISTÓRICO ========= -->
+    <section id="panel-tabela" class="panel">
+      <div class="card">
+        <div class="section-header">
+          <h3>Histórico Completo</h3>
+        </div>
+        <div class="table-wrap">
+          <table id="entries-table-duplicate">
+            <thead>
+              <tr>
+                <th>Comp.</th><th>Data</th><th>Tipo</th>
+                <th>Categoria</th><th>Descrição</th>
+                <th class="right">Valor</th><th></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+            <tfoot>
+              <tr>
+                <td><strong>Subtotal</strong></td>
+                <td></td><td></td><td></td><td></td>
+                <td class="right" id="subtotal-entries"><strong>R$ 0,00</strong></td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===================== BOTTOM NAV ===================== -->
+  <nav class="bottom-nav">
+    <div class="nav-items">
+      <button class="nav-item tab-btn active" data-target="inicial">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        <span class="nav-label">Início</span>
+      </button>
+      <button class="nav-item tab-btn" data-target="contas">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+        <span class="nav-label">Contas</span>
+      </button>
+      <button class="nav-item tab-btn" data-target="orcamentos">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0110 10H12V2z" fill="currentColor" stroke="none" opacity="0.3"/></svg>
+        <span class="nav-label">Orçamento</span>
+      </button>
+      <button class="nav-item tab-btn" data-target="receitas">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+        <span class="nav-label">Receitas</span>
+      </button>
+      <button class="nav-item tab-btn" data-target="visao-mensal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        <span class="nav-label">Mensal</span>
+      </button>
+      <button class="nav-item tab-btn" data-target="tabela">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        <span class="nav-label">Histórico</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ===================== FAB ===================== -->
+  <button class="fab" id="fab-btn" title="Novo lançamento">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+  </button>
+
+  <!-- ===================== OVERLAY ===================== -->
+  <div class="sheet-overlay" id="sheet-overlay"></div>
+
+  <!-- ===================== BOTTOM SHEET ===================== -->
+  <div class="bottom-sheet" id="add-entry-sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">
+      <span class="icon-dot"></span>
+      Novo Lançamento
+    </div>
+
+    <div class="form-grid">
+
+      <div class="form-row">
+        <label class="form-label">Tipo</label>
+        <select id="input-type" class="form-select">
+          <option value="expense">Despesa</option>
+          <option value="income">Receita</option>
+          <option value="investment">Investimento 💜</option>
+        </select>
+      </div>
+
+      <!-- Fixo/Variável: aparece logo após o tipo e filtra as categorias -->
+      <div class="form-row" id="fixed-row">
+        <label class="form-check" for="input-fixed">
+          <input id="input-fixed" type="checkbox" />
+          <span class="form-check-label" id="fixed-check-label">Custo fixo mensal</span>
+        </label>
+        <span class="form-check-sublabel" id="fixed-sublabel">mesmo valor todo mês · ex: aluguel, internet</span>
+      </div>
+
+      <div class="form-row">
+        <label class="form-label">Valor</label>
+        <input id="input-value" type="text" inputmode="decimal" placeholder="0,00" class="form-input" />
+      </div>
+
+      <div class="form-row">
+        <label class="form-label">Data</label>
+        <input id="input-date" type="date" class="form-input" />
+      </div>
+
+      <div class="form-row">
+        <label class="form-label">Competência</label>
+        <input id="input-competence" type="month" class="form-input" />
+      </div>
+
+      <!-- Category select — populated dynamically for all types (expense, investment) -->
+      <div class="form-row full">
+        <label class="form-label">Categoria</label>
+        <select id="input-category-select" class="form-select"></select>
+      </div>
+
+      <!-- New category text field — appears when "__new__" is selected -->
+      <div class="form-row full" id="new-cat-row" style="display:none">
+        <label class="form-label">Nome da nova categoria</label>
+        <input id="input-category-text" type="text" placeholder="ex: Criptomoedas" class="form-input" style="display:block" />
+      </div>
+
+      <div class="form-row full">
+        <label class="form-label">Descrição</label>
+        <input id="input-desc" type="text" placeholder="Descrição (opcional)" class="form-input" />
+      </div>
+
+      <div class="form-row">
+        <label class="form-check" for="input-parceled">
+          <input id="input-parceled" type="checkbox" />
+          <span class="form-check-label">Parcelado</span>
+        </label>
+      </div>
+
+      <div class="parcel-group" id="parcel-group">
+        <div class="form-row">
+          <label class="form-label">Total de parcelas</label>
+          <select id="input-parcel-total" class="form-select"></select>
+        </div>
+        <div class="form-row">
+          <label class="form-label">Parcela atual</label>
+          <select id="input-parcel-current" class="form-select"></select>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="form-actions">
+      <button id="btn-clear" class="btn btn-ghost">Limpar</button>
+      <button id="btn-add"   class="btn btn-primary">Adicionar</button>
+    </div>
+  </div>
+
+  <!-- ===================== COMPAT HIDDEN ===================== -->
+  <div hidden>
+    <button id="btn-export-backup"></button>
+    <button id="btn-import-backup"></button>
+    <input  id="import-backup-file" type="file" />
+    <button id="modal-add-row">Adicionar Categoria</button>
+    <button id="close-budgets">Fechar</button>
+    <div id="budgets-modal-back"></div>
+    <div id="modal-budgets-table-body"></div>
+    <button id="btn-export-catfix"></button>
+    <button id="btn-import-catfix"></button>
+    <input  id="import-catfix-file" type="file" />
+    <button id="btn-export-catfix-2"></button>
+    <button id="btn-import-catfix-2"></button>
+    <input  id="import-catfix-file-2" type="file" />
+    <button id="btn-export-entries"></button>
+    <button id="btn-import-entries"></button>
+    <input  id="import-entries-file" type="file" />
+    <button id="btn-export-incomes"></button>
+    <button id="btn-import-incomes"></button>
+    <input  id="import-incomes-file" type="file" />
+    <button id="modal-add-row-2"></button>
+    <button id="modal-add-row-2-bottom"></button>
+    <table id="categories-table"><tbody></tbody><tfoot><tr><td></td><td id="subtotal-categories"></td><td></td><td></td></tr></tfoot></table>
+  </div>
+
+  <!-- ===================== APP.JS ===================== -->
+  <script type="module" src="js/app.js"></script>
+
+  <!-- ===================== UI CONTROLLER ===================== -->
+  <script>
+  (function() {
+
+    /* ── FAB / SHEET ── */
+    const fab     = document.getElementById('fab-btn');
+    const overlay = document.getElementById('sheet-overlay');
+    const sheet   = document.getElementById('add-entry-sheet');
+
+    function openSheet()  { sheet.classList.add('open'); overlay.classList.add('visible'); fab.classList.add('open'); setTimeout(() => { const f = sheet.querySelector('select,input'); if(f) f.focus(); }, 320); }
+    function closeSheet() { sheet.classList.remove('open'); overlay.classList.remove('visible'); fab.classList.remove('open'); }
+
+    fab.addEventListener('click', () => sheet.classList.contains('open') ? closeSheet() : openSheet());
+    overlay.addEventListener('click', closeSheet);
+    document.getElementById('btn-add').addEventListener('click', () => setTimeout(closeSheet, 400));
+
+    /* ── Category select (handles expense + investment) ── */
+    const catSel    = document.getElementById('input-category-select');
+    const newCatRow = document.getElementById('new-cat-row');
+    const catText   = document.getElementById('input-category-text');
+
+    catSel.addEventListener('change', () => {
+      if (catSel.value === '__new__') {
+        newCatRow.style.display = 'flex';
+        catText.style.display = 'block';
+        catText.focus();
+      } else {
+        newCatRow.style.display = 'none';
+        catText.style.display = 'none';
+      }
+    });
+
+    /* ── Parcelas ── */
+    const parcCheck = document.getElementById('input-parceled');
+    const parcelGrp = document.getElementById('parcel-group');
+    parcCheck.addEventListener('change', () => parcCheck.checked ? parcelGrp.classList.add('visible') : parcelGrp.classList.remove('visible'));
+
+    /* ── Tab sync (mobile + desktop) ── */
+    function activateTarget(target) {
+      document.querySelectorAll('.tab-btn,.nav-item,.nav-tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll(`[data-target="${target}"]`).forEach(b => b.classList.add('active'));
+      document.querySelectorAll('.panel').forEach(p => { p.classList.remove('active'); p.style.display = ''; });
+      const panel = document.getElementById('panel-' + target);
+      if (panel) { panel.classList.add('active'); panel.style.display = 'block'; }
+    }
+
+    document.querySelectorAll('.tab-btn,.nav-item,.nav-tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => { const t = btn.dataset.target; if (t) activateTarget(t); });
+    });
+    window.__activateTarget = activateTarget;
+
+    /* ── Sync dot ── */
+    const syncStatus = document.getElementById('sync-status');
+    const syncDot    = document.getElementById('sync-dot');
+    new MutationObserver(() => {
+      const txt = syncStatus.textContent.toLowerCase();
+      syncDot.style.background = (txt.includes('conectado') || txt.includes('online')) ? '#10C9A0' : '#F0483A';
+      syncDot.style.boxShadow  = (txt.includes('conectado') || txt.includes('online')) ? '0 0 6px #10C9A0' : '0 0 6px #F0483A';
+    }).observe(syncStatus, { childList:true, characterData:true, subtree:true });
+
+  })();
+  </script>
+
+  <!-- ===================== PROGRESS BAR UPDATER ===================== -->
+  <script>
+  (function(){
+    function up(){ try{ if(typeof window.updateGlobalProgressBar==='function') window.updateGlobalProgressBar(); }catch(e){} }
+    setInterval(up, 1500);
+    window.addEventListener('load', () => setTimeout(up, 800));
+    window.addEventListener('app:state-changed', () => setTimeout(up, 100));
+  })();
+  </script>
+
+</body>
+</html>
