@@ -1071,21 +1071,35 @@ const renderKPIs = () => {
   const sel    = selectedFilterMonth !== 'all' ? selectedFilterMonth : null;
   const totals = calcTotals(sel);
   const orc    = calcOrcamentoTotal(sel);
-  const totalGasto  = totals.variableTotal + totals.fixedTotal + totals.investTotal;
-  const saldoGastar = orc.total - totalGasto;
 
-  if (el('k-variable'))    el('k-variable').textContent    = formatMoney(totals.variableTotal);
-  if (el('k-fixed'))       el('k-fixed').textContent       = formatMoney(totals.fixedTotal);
-  if (el('k-invest'))      el('k-invest').textContent      = formatMoney(totals.investTotal);
-  if (el('k-total-gasto')) el('k-total-gasto').textContent = formatMoney(totalGasto);
-  if (el('k-receita'))     el('k-receita').textContent     = formatMoney(totals.realReceita);
-  if (el('k-budget-net')) {
-    el('k-budget-net').textContent = formatMoney(saldoGastar);
-    el('k-budget-net').style.color = saldoGastar >= 0 ? 'var(--accent)' : 'var(--danger)';
-  }
+  // Parcelas separadas
+  let parcelasTotal = 0;
+  state.entries.forEach(e => {
+    if(!isValidEntry(e)||!e.seriesId) return;
+    const comp=e.competence||yyyyMmFromDate(e.date);
+    if(sel&&comp!==sel) return;
+    if(!sel) return;
+    parcelasTotal+=Number(e.value||0);
+  });
+
+  const totalGasto = totals.variableTotal + totals.fixedTotal + totals.investTotal;
+  const saldoLivre = totals.realReceita - totalGasto;
+
+  if (el('k-variable'))        el('k-variable').textContent        = formatMoney(totals.variableTotal);
+  if (el('k-fixed'))           el('k-fixed').textContent           = formatMoney(totals.fixedTotal);
+  if (el('k-invest'))          el('k-invest').textContent          = formatMoney(totals.investTotal);
+  if (el('k-parcelas-total'))  el('k-parcelas-total').textContent  = formatMoney(parcelasTotal);
+  if (el('k-total-gasto'))     el('k-total-gasto').textContent     = formatMoney(totalGasto);
+  if (el('k-receita'))         el('k-receita').textContent         = formatMoney(totals.realReceita);
+  if (el('k-receita-display')) el('k-receita-display').textContent = formatMoney(totals.realReceita);
   if (el('k-orcamento-total')) el('k-orcamento-total').textContent = formatMoney(orc.total);
+  if (el('k-budget-net')) {
+    el('k-budget-net').textContent = formatMoney(saldoLivre);
+    el('k-budget-net').style.color = saldoLivre >= 0 ? 'var(--accent)' : 'var(--danger)';
+  }
   if (el('k-budget')) el('k-budget').textContent = formatMoney(orc.orcVariavel);
-  if (el('k-net'))    el('k-net').textContent    = formatMoney(totals.realReceita - totalGasto);
+  if (el('k-net'))    el('k-net').textContent    = formatMoney(saldoLivre);
+  try { renderGastosRecentes(sel); } catch(e){}
 };
 
 // ── renderVariableTable ──────────────────────────────────────────────────────
@@ -1699,6 +1713,7 @@ const renderAll = () => {
     try { renderGastosRecentes(selectedFilterMonth !== 'all' ? selectedFilterMonth : null); } catch(e) {}
     try { renderAnalyticTab(analCurrentTab); } catch(e) {}
     try { updateDashboardParcelas(); } catch(e) {}
+    try { renderGastosDiarios(); } catch(e) {}
   } catch(e) { console.error('renderAll:', e); }
 };
 
@@ -1750,7 +1765,7 @@ function renderLembretes(){
   const mes = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
   const hoje = now.getDate();
   if(!lembretes.length){
-    container.innerHTML = '<div class="lembrete-empty small muted">Nenhuma conta cadastrada. Clique em "+ Adicionar" para criar um lembrete.</div>';
+    container.innerHTML = '<div class="lembrete-empty small muted">Nenhuma conta. Clique em "+ Adicionar" para criar.</div>';
     return;
   }
   const sorted = [...lembretes].sort((a,b) => {
@@ -1758,47 +1773,115 @@ function renderLembretes(){
     if(ap!==bp) return ap?1:-1;
     return (a.dia||31)-(b.dia||31);
   });
-  container.innerHTML = sorted.map(l => {
+
+  const pendentes = sorted.filter(l => !l.pago?.[mes]?.pago);
+  const pagas     = sorted.filter(l =>  l.pago?.[mes]?.pago);
+
+  function buildItem(l, pago){
     const mesData = l.pago?.[mes]||{};
-    const pago = mesData.pago||false;
-    const valorReal = mesData.valorReal!=null ? mesData.valorReal : (l.valor||0);
+    const valorRef = mesData.valorReal!=null ? mesData.valorReal : (l.valor||0);
     const diasR = (l.dia||0) - hoje;
-    const vencido = diasR<0 && !pago;
-    const urgente = diasR>=0 && diasR<=3 && !pago;
-    let statusClass='lembrete-pendente', statusText=`Vence dia ${l.dia||'—'}`;
-    if(pago){ statusClass='lembrete-pago'; statusText='Pago ✓'; }
-    else if(vencido){ statusClass='lembrete-vencido'; statusText=`Vencido (dia ${l.dia})`; }
-    else if(urgente){ statusClass='lembrete-urgente'; statusText=`Vence em ${diasR}d`; }
+    const vencido = diasR < 0;
+    const urgente = diasR >= 0 && diasR <= 3;
+    let statusClass='lembrete-pendente', statusText=l.dia?`Vence dia ${l.dia}`:'Sem vencimento';
+    if(pago)    { statusClass='lembrete-pago';    statusText=`Pago em ${mesData.dataPago||mes} · ${formatMoney(valorRef)}`; }
+    else if(vencido){ statusClass='lembrete-vencido'; statusText=`⚠️ Vencida (dia ${l.dia})`; }
+    else if(urgente){ statusClass='lembrete-urgente'; statusText=`🔥 Vence em ${diasR}d`; }
+    const valorExibido = l.fixo ? formatMoney(l.valor||0) : (valorRef>0?formatMoney(valorRef):'Valor variável');
     return `<div class="lembrete-item ${statusClass}">
-      <div class="lembrete-check-wrap">
-        <button class="lembrete-check-btn ${pago?'checked':''}" onclick="toggleLembretePago('${l.id}')">${pago?'✓':''}</button>
-      </div>
-      <div class="lembrete-body">
+      <div class="lembrete-body" style="flex:1">
         <div class="lembrete-desc ${pago?'pago-text':''}">${escapeHtml(l.desc||'')}</div>
         <div class="lembrete-meta">
           <span class="lembrete-status-badge">${statusText}</span>
           ${l.cat?`<span class="lembrete-cat">${escapeHtml(l.cat)}</span>`:''}
+          <span class="lembrete-cat" style="color:var(--text-2)">${valorExibido}</span>
         </div>
       </div>
       <div class="lembrete-valor-wrap">
-        <input class="lembrete-valor-input" type="number" step="0.01" value="${Number(valorReal).toFixed(2)}"
-          onchange="updateLembreteValorMes('${l.id}',this.value)" title="Valor deste mês"/>
+        ${!pago ? `<button class="lembrete-pagar-btn" onclick="abrirConfirmarPagamento('${l.id}')">Pagar</button>` : `<span class="lembrete-check-paid">✓</span>`}
         <div class="lembrete-actions">
           <button class="lembrete-edit-btn" onclick="editLembrete('${l.id}')">✏️</button>
           <button class="lembrete-del-btn" onclick="deleteLembrete('${l.id}')">✕</button>
         </div>
       </div>
     </div>`;
-  }).join('');
+  }
+
+  let html = '';
+  if(pendentes.length){
+    html += `<div class="lembrete-section-title">Pendentes (${pendentes.length})</div>`;
+    html += pendentes.map(l=>buildItem(l,false)).join('');
+  }
+  if(pagas.length){
+    html += `<div class="lembrete-section-title" style="margin-top:10px;color:var(--text-3)">Pagas este mês (${pagas.length})</div>`;
+    html += pagas.map(l=>buildItem(l,true)).join('');
+  }
+  container.innerHTML = html;
+}
+
+function abrirConfirmarPagamento(id){
+  const l = lembretes.find(x=>x.id===id); if(!l) return;
+  const modal = el('lembrete-pagar-modal-back'); if(!modal) return;
+  el('lembrete-pagar-id').value = id;
+  const valorInp = el('lembrete-pagar-valor');
+  if(valorInp) valorInp.value = l.valor>0 ? l.valor.toFixed(2) : '';
+  const dataInp = el('lembrete-pagar-data');
+  if(dataInp) dataInp.value = new Date().toISOString().slice(0,10);
+  const catInp = el('lembrete-pagar-cat');
+  if(catInp) catInp.value = l.cat||'';
+  modal.style.display = 'flex';
+}
+window.abrirConfirmarPagamento = abrirConfirmarPagamento;
+
+function initPagarModal(){
+  el('lembrete-pagar-cancel')?.addEventListener('click',()=>{
+    const m=el('lembrete-pagar-modal-back'); if(m) m.style.display='none';
+  });
+  el('lembrete-pagar-confirm')?.addEventListener('click', async()=>{
+    const id = el('lembrete-pagar-id')?.value;
+    const valor = parseFloat(el('lembrete-pagar-valor')?.value)||0;
+    const data = el('lembrete-pagar-data')?.value||new Date().toISOString().slice(0,10);
+    const cat = (el('lembrete-pagar-cat')?.value||'').trim()||'Outros';
+    const l = lembretes.find(x=>x.id===id); if(!l) return;
+
+    // Mark as paid in lembrete
+    const mes = new Date().toISOString().slice(0,7);
+    if(!l.pago) l.pago={};
+    l.pago[mes] = { pago:true, valorReal:valor, dataPago:data };
+    saveLembretes();
+
+    // Create actual expense entry
+    try {
+      const desc = l.desc || 'Conta paga';
+      const entry = {
+        id: uid(), type:'expense', fixed:false,
+        value: valor, date: data,
+        competence: data.slice(0,7),
+        category: cat, description: desc,
+        _fromLembrete: id, createdAt: new Date().toISOString()
+      };
+      state.entries.push(entry);
+      saveLocal();
+      if(currentUser && window.db){
+        await db.collection('users').doc(currentUser.uid).collection('entries').doc(entry.id).set(entry);
+      }
+      dispatchEvent(new Event('app:state-changed'));
+    } catch(err){ console.error('lembrete launch entry',err); }
+
+    renderLembretes();
+    const m=el('lembrete-pagar-modal-back'); if(m) m.style.display='none';
+
+    // Toast
+    const toast=document.createElement('div');
+    toast.textContent=`✅ Pagamento de ${formatMoney(valor)} lançado!`;
+    toast.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#012b29;color:#fff;padding:12px 24px;border-radius:10px;font-weight:700;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,0.3)';
+    document.body.appendChild(toast); setTimeout(()=>toast.remove(),3000);
+  });
 }
 
 function toggleLembretePago(id){
-  const l=lembretes.find(x=>x.id===id); if(!l) return;
-  const mes=new Date().toISOString().slice(0,7);
-  if(!l.pago) l.pago={};
-  const cur=l.pago[mes]||{};
-  l.pago[mes]={...cur, pago:!cur.pago, valorReal:cur.valorReal??l.valor};
-  saveLembretes(); renderLembretes();
+  // Now handled by abrirConfirmarPagamento
+  abrirConfirmarPagamento(id);
 }
 function updateLembreteValorMes(id,val){
   const l=lembretes.find(x=>x.id===id); if(!l) return;
@@ -1824,28 +1907,58 @@ function deleteLembrete(id){
   saveLembretes(); renderLembretes();
 }
 function initLembretes(){
-  const btnAdd=el('btn-add-lembrete');
-  if(btnAdd) btnAdd.addEventListener('click',()=>{
+  function openLembreteModal(id){
     const modal=el('lembrete-modal-back'); if(!modal) return;
-    el('lembrete-modal-title').textContent='Novo Lembrete';
-    el('lembrete-edit-id').value='';
-    ['lembrete-desc','lembrete-cat'].forEach(i=>{const e=el(i);if(e)e.value='';});
-    ['lembrete-valor','lembrete-dia'].forEach(i=>{const e=el(i);if(e)e.value='';});
+    if(id){
+      const l=lembretes.find(x=>x.id===id); if(!l) return;
+      el('lembrete-modal-title').textContent='Editar Conta';
+      el('lembrete-edit-id').value=id;
+      el('lembrete-desc').value=l.desc||'';
+      el('lembrete-cat').value=l.cat||'';
+      el('lembrete-dia').value=l.dia||'';
+      el('lembrete-valor').value=l.valor||'';
+      if(el('lembrete-fixo')) el('lembrete-fixo').checked=!!l.fixo;
+    } else {
+      el('lembrete-modal-title').textContent='Nova Conta a Pagar';
+      el('lembrete-edit-id').value='';
+      ['lembrete-desc','lembrete-cat'].forEach(i=>{const e=el(i);if(e)e.value='';});
+      ['lembrete-valor','lembrete-dia'].forEach(i=>{const e=el(i);if(e)e.value='';});
+      if(el('lembrete-fixo')) el('lembrete-fixo').checked=false;
+    }
     modal.style.display='flex';
-  });
+  }
+
+  el('btn-add-lembrete')?.addEventListener('click',()=>openLembreteModal(null));
   el('lembrete-cancel')?.addEventListener('click',()=>{ const m=el('lembrete-modal-back');if(m)m.style.display='none'; });
+
+  // Toggle valor label based on fixo
+  el('lembrete-fixo')?.addEventListener('change', e=>{
+    const lbl=el('lembrete-valor-label');
+    if(lbl) lbl.textContent=e.target.checked?'Valor fixo (R$)':'Valor estimado (R$) — pode mudar ao pagar';
+  });
+
   el('lembrete-save')?.addEventListener('click',()=>{
     const id=el('lembrete-edit-id')?.value;
     const desc=(el('lembrete-desc')?.value||'').trim();
-    const valor=parseFloat(el('lembrete-valor')?.value)||0;
-    const dia=parseInt(el('lembrete-dia')?.value)||null;
     const cat=(el('lembrete-cat')?.value||'').trim();
+    const dia=parseInt(el('lembrete-dia')?.value)||null;
+    const fixo=!!(el('lembrete-fixo')?.checked);
+    const valor=parseFloat(el('lembrete-valor')?.value)||0;
     if(!desc){alert('Descreva a conta');return;}
-    if(id){ const l=lembretes.find(x=>x.id===id); if(l){l.desc=desc;l.valor=valor;l.dia=dia;l.cat=cat;} }
-    else { lembretes.push({id:'l'+Date.now(),desc,valor,dia,cat,pago:{}}); }
+    if(id){
+      const l=lembretes.find(x=>x.id===id);
+      if(l){l.desc=desc;l.cat=cat;l.dia=dia;l.fixo=fixo;l.valor=valor;}
+    } else {
+      lembretes.push({id:'l'+Date.now(),desc,cat,dia,fixo,valor,pago:{}});
+    }
     saveLembretes(); renderLembretes();
     el('lembrete-modal-back').style.display='none';
   });
+
+  // Wire editLembrete global
+  window.editLembrete = id => openLembreteModal(id);
+
+  initPagarModal();
   renderLembretes();
 }
 window.toggleLembretePago=toggleLembretePago;
@@ -2089,20 +2202,33 @@ function renderAnalProjecao(){
     </div>`;
   }).join('');
   if(projecaoParcelas){
-    const roots=state.entries.filter(e=>e&&e.series&&Number(e.series.total)>1);
-    if(!roots.length){projecaoParcelas.innerHTML='<div class="small muted" style="padding:12px">Nenhum parcelamento ativo.</div>';return;}
+    // Only show series that still have future installments
+    const roots=state.entries.filter(e=>{
+      if(!e||!e.series||!(Number(e.series.total)>1)) return false;
+      // Check if there are children still in the future
+      const children=state.entries.filter(c=>c.seriesId===e.id);
+      const hasMore=children.some(c=>{
+        const d=new Date((c.competence||'2000-01')+'-01');
+        return d>=new Date(now.getFullYear(),now.getMonth(),1);
+      });
+      return hasMore;
+    });
+    if(!roots.length){projecaoParcelas.innerHTML='<div class="small muted" style="padding:12px">Nenhum parcelamento ativo no momento.</div>';return;}
     projecaoParcelas.innerHTML=roots.map(root=>{
       const children=state.entries.filter(c=>c.seriesId===root.id);
       const desc=(root.description||'').replace(/ \(\d+\/\d+\)$/,'');
-      const paid=children.filter(c=>{const d=new Date((c.competence||'2000-01')+'-01');return d<now;}).length;
-      const pct=root.series.total>0?Math.round((paid/root.series.total)*100):0;
+      const nowDate=new Date(now.getFullYear(),now.getMonth(),1);
+      const paid=children.filter(c=>{const d=new Date((c.competence||'2000-01')+'-01');return d<nowDate;}).length;
+      const remaining=children.filter(c=>{const d=new Date((c.competence||'2000-01')+'-01');return d>=nowDate;}).length;
+      const total=Number(root.series.total)||children.length;
+      const pct=total>0?Math.round((paid/total)*100):0;
       return `<div class="parcela-prog-item">
         <div class="parcela-prog-header">
-          <span>${escapeHtml(desc)}</span>
-          <span class="small muted">${paid}/${root.series.total} · ${formatMoney(root.value)}/mês</span>
+          <span style="font-weight:600">${escapeHtml(desc)}</span>
+          <span class="small muted">${paid}/${total} pagas · <strong>${remaining} restante(s)</strong> · ${formatMoney(root.value)}/mês</span>
         </div>
-        <div style="background:var(--border);border-radius:4px;height:6px;overflow:hidden">
-          <div style="height:100%;width:${pct}%;background:var(--accent);border-radius:4px"></div>
+        <div style="background:var(--border);border-radius:4px;height:7px;overflow:hidden;margin-top:5px">
+          <div style="height:100%;width:${pct}%;background:var(--accent);border-radius:4px;transition:width 0.3s"></div>
         </div>
       </div>`;
     }).join('');
@@ -2137,6 +2263,92 @@ window.renderLembretes=renderLembretes;
 window.loadLembretesFromCloud=loadLembretesFromCloud;
 
 
+
+
+// ─── GASTOS DIÁRIOS ───────────────────────────────────────────────────────────
+let gdPeriod='month', gdFromDate=null, gdToDate=null, gdCatFilter='';
+
+function getGDDateRange(){
+  const now=new Date(), today=now.toISOString().slice(0,10), month=now.toISOString().slice(0,7);
+  if(gdPeriod==='today') return {from:today,to:today};
+  if(gdPeriod==='7d'){const d=new Date(now);d.setDate(d.getDate()-6);return{from:d.toISOString().slice(0,10),to:today};}
+  if(gdPeriod==='30d'){const d=new Date(now);d.setDate(d.getDate()-29);return{from:d.toISOString().slice(0,10),to:today};}
+  if(gdPeriod==='month') return {from:month+'-01',to:month+'-31'};
+  if(gdPeriod==='prev-month'){const d=new Date(now.getFullYear(),now.getMonth()-1,1);const m=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');return{from:m+'-01',to:m+'-31'};}
+  if(gdPeriod==='custom'&&gdFromDate&&gdToDate) return {from:gdFromDate,to:gdToDate};
+  return {from:month+'-01',to:month+'-31'};
+}
+
+function renderGastosDiarios(){
+  const listEl=el('gd-list'), summaryEl=el('gd-period-summary');
+  if(!listEl) return;
+  const {from,to}=getGDDateRange();
+  const rows=[];
+  state.entries.forEach(e=>{
+    if(!isValidEntry(e)||e.type!=='expense'||e.fixed) return;
+    const bi=getBudgetForMonth((e.category||'').trim(),yyyyMmFromDate(e.date));
+    if(bi&&bi.isFixed) return;
+    const d=e.date?e.date.slice(0,10):'';
+    if(!d||d<from||d>to) return;
+    if(gdCatFilter&&(e.category||'')!==gdCatFilter) return;
+    rows.push({entry:e,date:d,value:Number(e.value||0)});
+  });
+  // Populate cat filter
+  const catFilter=el('gd-filter-cat');
+  if(catFilter){
+    const cats=[...new Set(rows.map(r=>r.entry.category||'').filter(Boolean))].sort();
+    const prev=catFilter.value;
+    catFilter.innerHTML='<option value="">Todas</option>'+cats.map(c=>`<option value="${escapeHtml(c)}"${c===prev?' selected':''}>${escapeHtml(c)}</option>`).join('');
+  }
+  rows.sort((a,b)=>b.date.localeCompare(a.date));
+  const totalPeriod=rows.reduce((s,r)=>s+r.value,0);
+  if(summaryEl){
+    const dayCount=rows.length?new Set(rows.map(r=>r.date)).size:0;
+    summaryEl.innerHTML=totalPeriod>0
+      ?`<div class="gd-summary-total"><span>Total no período:</span><strong>${formatMoney(totalPeriod)}</strong></div><div class="gd-summary-avg">${dayCount} dia(s) com gastos · média ${formatMoney(dayCount?totalPeriod/dayCount:0)}/dia</div>`
+      :'<div class="gd-summary-total" style="color:var(--text-3)">Nenhum gasto neste período.</div>';
+  }
+  if(!rows.length){listEl.innerHTML='<div class="gd-empty">Nenhum gasto variável neste período.</div>';return;}
+  const byDate={};
+  rows.forEach(r=>{(byDate[r.date]=byDate[r.date]||[]).push(r);});
+  listEl.innerHTML=Object.keys(byDate).sort().reverse().map(date=>{
+    const items=byDate[date];
+    const dayTotal=items.reduce((s,r)=>s+r.value,0);
+    const [y,m,d]=date.split('-');
+    return `<div class="gd-day-group">
+      <div class="gd-day-header"><span class="gd-day-date">${d}/${m}/${y}</span><span class="gd-day-total">${formatMoney(dayTotal)}</span></div>
+      ${items.map(r=>`<div class="gd-item">
+        <div class="gd-item-left">
+          <span class="gd-item-cat">${escapeHtml(r.entry.category||'—')}</span>
+          <span class="gd-item-desc">${escapeHtml(r.entry.description||'')}</span>
+        </div>
+        <div class="gd-item-right">
+          <span class="gd-item-val">−${formatMoney(r.value)}</span>
+          <div class="gd-item-actions">
+            <button class="gd-item-btn" onclick="editEntry('${r.entry.id}')">✏️</button>
+            <button class="gd-item-btn gd-item-btn-del" onclick="deleteEntry('${r.entry.id}')">🗑</button>
+          </div>
+        </div>
+      </div>`).join('')}
+    </div>`;
+  }).join('');
+}
+
+function initGastosDiarios(){
+  document.addEventListener('click',e=>{
+    const pill=e.target.closest('[data-period]'); if(!pill) return;
+    gdPeriod=pill.getAttribute('data-period');
+    document.querySelectorAll('[data-period]').forEach(p=>p.classList.remove('active'));
+    pill.classList.add('active');
+    const cr=el('gd-custom-range'); if(cr) cr.style.display=gdPeriod==='custom'?'flex':'none';
+    if(gdPeriod!=='custom') renderGastosDiarios();
+  });
+  el('gd-apply-custom')?.addEventListener('click',()=>{
+    gdFromDate=el('gd-from')?.value; gdToDate=el('gd-to')?.value;
+    if(gdFromDate&&gdToDate) renderGastosDiarios();
+  });
+  el('gd-filter-cat')?.addEventListener('change',e=>{gdCatFilter=e.target.value;renderGastosDiarios();});
+}
 
 // ─── FORM HELPERS ─────────────────────────────────────────────────────────────
 const clearForm = () => {
