@@ -704,7 +704,14 @@
       <h3 id="lembrete-modal-title">Nova Conta a Pagar</h3>
       <input type="hidden" id="lembrete-edit-id"/>
       <div class="app-row"><label>Descrição <span class="small muted">Ex: Boleto da pós, Parcela do carro</span></label><input id="lembrete-desc" placeholder="Ex: Boleto da faculdade"/></div>
-      <div class="app-row"><label>Categoria</label><input id="lembrete-cat" placeholder="Ex: Educação, Transporte"/></div>
+      <div class="app-row">
+        <label>Categoria</label>
+        <select id="lembrete-cat-select" class="form-select" style="margin-bottom:6px">
+          <option value="">Selecione uma categoria</option>
+        </select>
+        <input id="lembrete-cat" placeholder="Ou digite uma nova categoria" style="margin-top:4px"/>
+        <span class="small muted" style="margin-top:2px">Selecione acima ou digite uma nova abaixo</span>
+      </div>
       <div class="app-row"><label>Dia do vencimento (todo mês)</label><input id="lembrete-dia" type="number" min="1" max="31" placeholder="Ex: 10"/></div>
       <div class="app-row" style="background:var(--surface-2);border-radius:var(--r-sm);padding:10px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700">
