@@ -1575,3 +1575,78 @@ textarea.form-input {
   .projecao-cards { grid-template-columns: 1fr 1fr; }
   .orc-dist-row { grid-template-columns: 1fr 1fr 1fr; }
 }
+
+/* ── Lembrete pagar button ── */
+.lembrete-pagar-btn {
+  padding: 5px 12px;
+  border-radius: 100px;
+  border: 1.5px solid var(--accent);
+  background: rgba(16,201,160,0.1);
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: all 0.18s;
+}
+.lembrete-pagar-btn:hover { background: var(--accent); color: #fff; }
+.lembrete-check-paid { font-size: 1.1rem; color: var(--accent); font-weight: 700; }
+.lembrete-section-title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-3);
+  padding: 6px 0 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+}
+
+/* ── KPI grid 4 columns ── */
+.dash-kpi-grid-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+@media (max-width: 767px) {
+  .dash-kpi-grid-4 { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 380px) {
+  .dash-kpi-grid-4 { grid-template-columns: 1fr 1fr; }
+}
+.dash-kpi-receita { border-left: 4px solid var(--income); }
+
+/* ── Progress legend colors ── */
+.prog-leg-fixas strong { color: var(--warning); }
+.prog-leg-var strong { color: var(--danger); }
+.prog-leg-parc strong { color: #6366f1; }
+.prog-leg-inv strong { color: var(--invest); }
+
+/* ── GD (gastos diários) full styles ── */
+.gd-filters { margin-bottom:16px; padding-bottom:14px; border-bottom:1px solid var(--border); }
+.gd-period-pills { display:flex; flex-wrap:wrap; gap:6px; }
+.gd-pill { padding:6px 14px; border-radius:100px; border:1.5px solid var(--border); background:var(--surface-2); color:var(--text-2); font-size:0.78rem; font-weight:600; cursor:pointer; font-family:inherit; transition:all 0.18s; white-space:nowrap; }
+.gd-pill:hover { background:var(--border); }
+.gd-pill.active { background:var(--navy); color:#fff; border-color:var(--navy); }
+.gd-period-summary { margin-bottom:14px; padding:12px 14px; background:var(--surface-2); border-radius:var(--r-sm); border-left:3px solid var(--accent); }
+.gd-summary-total { display:flex; align-items:center; justify-content:space-between; font-size:0.9rem; font-weight:600; }
+.gd-summary-total strong { font-size:1.1rem; font-family:'DM Mono',monospace; color:var(--danger); }
+.gd-summary-avg { font-size:0.75rem; color:var(--text-3); margin-top:2px; }
+.gd-list { display:flex; flex-direction:column; gap:4px; }
+.gd-empty { text-align:center; padding:32px; color:var(--text-3); font-size:0.88rem; }
+.gd-day-group { background:var(--surface); border-radius:var(--r); border:1px solid var(--border); overflow:hidden; margin-bottom:10px; }
+.gd-day-header { display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:var(--navy); color:#fff; }
+.gd-day-date { font-size:0.82rem; font-weight:700; }
+.gd-day-total { font-size:0.88rem; font-weight:700; font-family:'DM Mono',monospace; color:rgba(255,255,255,0.85); }
+.gd-item { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--border); gap:10px; transition:background 0.15s; }
+.gd-item:last-child { border-bottom:none; }
+.gd-item:hover { background:var(--surface-2); }
+.gd-item-left { display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; }
+.gd-item-cat { font-size:0.65rem; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-2); }
+.gd-item-desc { font-size:0.88rem; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gd-item-right { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.gd-item-val { font-size:0.95rem; font-weight:700; font-family:'DM Mono',monospace; color:var(--danger); white-space:nowrap; }
+.gd-item-actions { display:flex; gap:4px; opacity:0; transition:opacity 0.15s; }
+.gd-item:hover .gd-item-actions { opacity:1; }
+.gd-item-btn { width:28px; height:28px; border:none; border-radius:var(--r-sm); background:var(--surface-2); cursor:pointer; font-size:0.82rem; display:flex; align-items:center; justify-content:center; }
+.gd-item-btn-del:hover { background:rgba(240,72,58,0.15); }
+@media (max-width:767px) { .gd-item-actions { opacity:1; } }
