@@ -1717,6 +1717,427 @@ function updateDashboardParcelas(){
   if(el2) el2.textContent=formatMoney(totalParcelas);
 }
 
+// ─── LEMBRETES (Contas a Pagar) ───────────────────────────────────────────────
+const LEMBRETES_KEY = 'finance_lembretes_v1';
+let lembretes = JSON.parse(localStorage.getItem(LEMBRETES_KEY) || '[]');
+
+function saveLembretes(){
+  localStorage.setItem(LEMBRETES_KEY, JSON.stringify(lembretes));
+  try {
+    if(window.db && currentUser){
+      db.collection('users').doc(currentUser.uid).collection('lembretes')
+        .doc('list').set({ items: lembretes }, { merge: true });
+    }
+  } catch(e){}
+}
+
+function loadLembretesFromCloud(){
+  if(!window.db || !currentUser) return;
+  db.collection('users').doc(currentUser.uid).collection('lembretes')
+    .doc('list').get().then(doc => {
+      if(doc.exists && doc.data().items){
+        lembretes = doc.data().items;
+        localStorage.setItem(LEMBRETES_KEY, JSON.stringify(lembretes));
+        renderLembretes();
+      }
+    }).catch(e => console.error('loadLembretes', e));
+}
+
+function renderLembretes(){
+  const container = el('lembretes-list');
+  if(!container) return;
+  const now = new Date();
+  const mes = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+  const hoje = now.getDate();
+  if(!lembretes.length){
+    container.innerHTML = '<div class="lembrete-empty small muted">Nenhuma conta cadastrada. Clique em "+ Adicionar" para criar um lembrete.</div>';
+    return;
+  }
+  const sorted = [...lembretes].sort((a,b) => {
+    const ap = a.pago?.[mes]?.pago||false, bp = b.pago?.[mes]?.pago||false;
+    if(ap!==bp) return ap?1:-1;
+    return (a.dia||31)-(b.dia||31);
+  });
+  container.innerHTML = sorted.map(l => {
+    const mesData = l.pago?.[mes]||{};
+    const pago = mesData.pago||false;
+    const valorReal = mesData.valorReal!=null ? mesData.valorReal : (l.valor||0);
+    const diasR = (l.dia||0) - hoje;
+    const vencido = diasR<0 && !pago;
+    const urgente = diasR>=0 && diasR<=3 && !pago;
+    let statusClass='lembrete-pendente', statusText=`Vence dia ${l.dia||'—'}`;
+    if(pago){ statusClass='lembrete-pago'; statusText='Pago ✓'; }
+    else if(vencido){ statusClass='lembrete-vencido'; statusText=`Vencido (dia ${l.dia})`; }
+    else if(urgente){ statusClass='lembrete-urgente'; statusText=`Vence em ${diasR}d`; }
+    return `<div class="lembrete-item ${statusClass}">
+      <div class="lembrete-check-wrap">
+        <button class="lembrete-check-btn ${pago?'checked':''}" onclick="toggleLembretePago('${l.id}')">${pago?'✓':''}</button>
+      </div>
+      <div class="lembrete-body">
+        <div class="lembrete-desc ${pago?'pago-text':''}">${escapeHtml(l.desc||'')}</div>
+        <div class="lembrete-meta">
+          <span class="lembrete-status-badge">${statusText}</span>
+          ${l.cat?`<span class="lembrete-cat">${escapeHtml(l.cat)}</span>`:''}
+        </div>
+      </div>
+      <div class="lembrete-valor-wrap">
+        <input class="lembrete-valor-input" type="number" step="0.01" value="${Number(valorReal).toFixed(2)}"
+          onchange="updateLembreteValorMes('${l.id}',this.value)" title="Valor deste mês"/>
+        <div class="lembrete-actions">
+          <button class="lembrete-edit-btn" onclick="editLembrete('${l.id}')">✏️</button>
+          <button class="lembrete-del-btn" onclick="deleteLembrete('${l.id}')">✕</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleLembretePago(id){
+  const l=lembretes.find(x=>x.id===id); if(!l) return;
+  const mes=new Date().toISOString().slice(0,7);
+  if(!l.pago) l.pago={};
+  const cur=l.pago[mes]||{};
+  l.pago[mes]={...cur, pago:!cur.pago, valorReal:cur.valorReal??l.valor};
+  saveLembretes(); renderLembretes();
+}
+function updateLembreteValorMes(id,val){
+  const l=lembretes.find(x=>x.id===id); if(!l) return;
+  const mes=new Date().toISOString().slice(0,7);
+  if(!l.pago) l.pago={};
+  l.pago[mes]={...(l.pago[mes]||{}), valorReal:parseFloat(val)||0};
+  saveLembretes();
+}
+function editLembrete(id){
+  const l=lembretes.find(x=>x.id===id); if(!l) return;
+  const modal=el('lembrete-modal-back'); if(!modal) return;
+  el('lembrete-modal-title').textContent='Editar Lembrete';
+  el('lembrete-edit-id').value=id;
+  el('lembrete-desc').value=l.desc||'';
+  el('lembrete-valor').value=l.valor||0;
+  el('lembrete-dia').value=l.dia||'';
+  el('lembrete-cat').value=l.cat||'';
+  modal.style.display='flex';
+}
+function deleteLembrete(id){
+  if(!confirm('Excluir este lembrete?')) return;
+  lembretes=lembretes.filter(x=>x.id!==id);
+  saveLembretes(); renderLembretes();
+}
+function initLembretes(){
+  const btnAdd=el('btn-add-lembrete');
+  if(btnAdd) btnAdd.addEventListener('click',()=>{
+    const modal=el('lembrete-modal-back'); if(!modal) return;
+    el('lembrete-modal-title').textContent='Novo Lembrete';
+    el('lembrete-edit-id').value='';
+    ['lembrete-desc','lembrete-cat'].forEach(i=>{const e=el(i);if(e)e.value='';});
+    ['lembrete-valor','lembrete-dia'].forEach(i=>{const e=el(i);if(e)e.value='';});
+    modal.style.display='flex';
+  });
+  el('lembrete-cancel')?.addEventListener('click',()=>{ const m=el('lembrete-modal-back');if(m)m.style.display='none'; });
+  el('lembrete-save')?.addEventListener('click',()=>{
+    const id=el('lembrete-edit-id')?.value;
+    const desc=(el('lembrete-desc')?.value||'').trim();
+    const valor=parseFloat(el('lembrete-valor')?.value)||0;
+    const dia=parseInt(el('lembrete-dia')?.value)||null;
+    const cat=(el('lembrete-cat')?.value||'').trim();
+    if(!desc){alert('Descreva a conta');return;}
+    if(id){ const l=lembretes.find(x=>x.id===id); if(l){l.desc=desc;l.valor=valor;l.dia=dia;l.cat=cat;} }
+    else { lembretes.push({id:'l'+Date.now(),desc,valor,dia,cat,pago:{}}); }
+    saveLembretes(); renderLembretes();
+    el('lembrete-modal-back').style.display='none';
+  });
+  renderLembretes();
+}
+window.toggleLembretePago=toggleLembretePago;
+window.updateLembreteValorMes=updateLembreteValorMes;
+window.editLembrete=editLembrete;
+window.deleteLembrete=deleteLembrete;
+
+// ─── ORÇAMENTO NOVO ───────────────────────────────────────────────────────────
+function renderOrcamentoNovo(){
+  const sel=selectedFilterMonth!=='all'?selectedFilterMonth:null;
+  const totals=calcTotals(sel);
+  const orc=calcOrcamentoTotal(sel);
+  const totalGasto=totals.variableTotal+totals.fixedTotal+totals.investTotal;
+  const saldoLivre=orc.total-totalGasto;
+  const receita=totals.realReceita;
+
+  const fluxoEl=el('orc-fluxo-resumo');
+  if(fluxoEl){
+    const pct=orc.total>0?Math.min(100,Math.round((totalGasto/orc.total)*100)):0;
+    let barColor='#10b981';
+    if(pct>100) barColor='var(--danger)';
+    else if(pct>80) barColor='var(--warning)';
+    fluxoEl.innerHTML=`<div class="orc-resumo-bar-card">
+      <div class="orc-resumo-row">
+        <div class="orc-resumo-item"><div class="orc-resumo-label">💰 Receita</div><div class="orc-resumo-val orc-val-income">${formatMoney(receita)}</div></div>
+        <div class="orc-resumo-arrow">→</div>
+        <div class="orc-resumo-item"><div class="orc-resumo-label">📊 Total Gasto</div><div class="orc-resumo-val orc-val-expense">${formatMoney(totalGasto)}</div></div>
+        <div class="orc-resumo-arrow">→</div>
+        <div class="orc-resumo-item"><div class="orc-resumo-label">🎯 Saldo Livre</div><div class="orc-resumo-val" style="color:${saldoLivre>=0?'var(--accent)':'var(--danger)'}">${formatMoney(saldoLivre)}</div></div>
+      </div>
+      <div style="margin-top:12px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span class="small muted">Orçamento utilizado</span>
+          <span class="small" style="font-weight:700;color:${barColor}">${pct}%</span>
+        </div>
+        <div style="background:var(--border);border-radius:6px;height:8px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:${barColor};border-radius:6px;transition:width 0.4s"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:4px">
+          <span class="small muted">Gasto: ${formatMoney(totalGasto)}</span>
+          <span class="small muted">Planejado: ${formatMoney(orc.total)}</span>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  const distEl=el('orc-dist-grid');
+  if(distEl){
+    const items=[
+      {label:'Fixas',val:totals.fixedTotal,orc:orc.orcFixo,color:'var(--warning)',icon:'🔒'},
+      {label:'Variáveis',val:totals.variableTotal,orc:orc.orcVariavel,color:'var(--danger)',icon:'💸'},
+      {label:'Investimentos',val:totals.investTotal,orc:orc.orcInvest,color:'var(--invest)',icon:'💜'},
+    ];
+    distEl.innerHTML=`<div class="orc-dist-row">`+items.map(it=>{
+      const p=it.orc>0?Math.min(100,Math.round((it.val/it.orc)*100)):(it.val>0?100:0);
+      return `<div class="orc-dist-card">
+        <div class="orc-dist-icon">${it.icon}</div>
+        <div class="orc-dist-label">${it.label}</div>
+        <div class="orc-dist-val" style="color:${it.color}">${formatMoney(it.val)}</div>
+        <div class="orc-dist-orc">de ${formatMoney(it.orc)}</div>
+        <div class="orc-dist-bar-track"><div class="orc-dist-bar-fill" style="width:${p}%;background:${it.color}"></div></div>
+        <div class="orc-dist-pct" style="color:${it.color}">${p}%</div>
+      </div>`;
+    }).join('')+`</div>`;
+  }
+
+  const catList=el('orc-categorias-list');
+  const subtotalsEl=el('orc-subtotals');
+  if(!catList) return;
+  catList.innerHTML='';
+  const catSet=new Set([
+    ...Object.keys(state.budgets||{}),
+    ...(sel&&state.monthlyHistory?.[sel]?.budgets?Object.keys(state.monthlyHistory[sel].budgets):[])
+  ]);
+  const cats=Array.from(catSet).filter(cat=>{
+    const b=getBudgetForMonth(cat,sel);
+    return b&&b.kind!=='income';
+  }).sort();
+  if(!cats.length){
+    catList.innerHTML='<div class="small muted" style="padding:16px">Nenhuma categoria. Use "+ Nova Categoria" para começar.</div>';
+    return;
+  }
+  let totalOrc=0,totalGastoC=0;
+  cats.forEach(cat=>{
+    const b=getBudgetForMonth(cat,sel); if(!b) return;
+    const orcado=Number(b.budget||0);
+    const isInvest=b.kind==='investment';
+    let gasto=0;
+    if(isInvest){ gasto=calcInvestByCategory(cat,sel); }
+    else {
+      state.entries.forEach(e=>{
+        if(!isValidEntry(e)||e.type!=='expense') return;
+        expandEntry(e,sel).forEach(inst=>{
+          const eCat=(inst.entry.category&&String(inst.entry.category).trim())||'(Sem categoria)';
+          if(eCat!==cat) return;
+          const bi=getBudgetForMonth(eCat,sel);
+          if(inst.entry.fixed||(bi&&bi.isFixed)) return;
+          gasto+=Number(inst.value||0);
+        });
+      });
+    }
+    totalOrc+=orcado; totalGastoC+=gasto;
+    const restante=orcado-gasto;
+    const pct=orcado>0?Math.min(100,Math.round((gasto/orcado)*100)):(gasto>0?100:0);
+    let barColor='#10b981';
+    if(pct>100) barColor='var(--danger)';
+    else if(pct>80) barColor='var(--warning)';
+    const typeIcon=isInvest?'💜':b.isFixed?'🔒':'💸';
+    const div=document.createElement('div');
+    div.className='orc-cat-item';
+    div.innerHTML=`
+      <div class="orc-cat-header">
+        <div class="orc-cat-name"><span class="orc-cat-icon">${typeIcon}</span><span>${escapeHtml(cat)}</span></div>
+        <div class="orc-cat-values">
+          <span class="orc-cat-gasto" style="color:${barColor}">${formatMoney(gasto)}</span>
+          <span class="orc-cat-sep">·</span>
+          <span class="orc-cat-orc">de ${formatMoney(orcado)}</span>
+          <span class="orc-cat-pct" style="color:${barColor}">${pct}%</span>
+        </div>
+      </div>
+      <div class="orc-cat-bar-track"><div class="orc-cat-bar-fill" style="width:${pct}%;background:${barColor}"></div></div>
+      <div class="orc-cat-restante" style="color:${restante>=0?'var(--text-3)':'var(--danger)'}">
+        ${restante>=0?'Disponível':'Excedido'}: ${formatMoney(Math.abs(restante))}
+        <span class="orc-cat-edit" onclick="editBudget('${cat.replace(/'/g,"\\'")}')" style="cursor:pointer">✏️ Editar</span>
+      </div>`;
+    catList.appendChild(div);
+  });
+  if(subtotalsEl){
+    const resto=totalOrc-totalGastoC;
+    subtotalsEl.innerHTML=`<div class="orc-subtotal-row">
+      <span>Orçado: <strong>${formatMoney(totalOrc)}</strong></span>
+      <span>Gasto: <strong style="color:var(--danger)">${formatMoney(totalGastoC)}</strong></span>
+      <span style="color:${resto>=0?'var(--accent)':'var(--danger)'}">Disponível: <strong>${formatMoney(resto)}</strong></span>
+    </div>`;
+  }
+}
+
+// ─── DASHBOARD ANALÍTICO ──────────────────────────────────────────────────────
+let analCurrentTab='evolucao';
+
+function initAnalTabs(){
+  document.addEventListener('click',e=>{
+    const btn=e.target.closest('[data-atab]'); if(!btn) return;
+    analCurrentTab=btn.getAttribute('data-atab');
+    document.querySelectorAll('.anal-tab').forEach(b=>b.classList.toggle('active',b.getAttribute('data-atab')===analCurrentTab));
+    document.querySelectorAll('.anal-panel').forEach(p=>p.classList.toggle('active',p.id===`atab-${analCurrentTab}`));
+    renderAnalyticTab(analCurrentTab);
+  });
+}
+
+function renderAnalyticTab(tab){
+  if(tab==='evolucao') renderAnalEvolucao();
+  else if(tab==='categorias') renderAnalCategorias();
+  else if(tab==='projecao') renderAnalProjecao();
+}
+
+function renderAnalEvolucao(){
+  const kpiRow=el('anal-kpi-row'); if(!kpiRow) return;
+  const nowM=new Date().toISOString().slice(0,7);
+  const [sy,sm]=nowM.split('-').map(Number);
+  const months=[];
+  for(let i=0;i<12;i++){
+    const d=new Date(sy,sm-12+i,1);
+    months.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
+  }
+  const rows=months.map(m=>{
+    const t=calcTotals(m), o=calcOrcamentoTotal(m);
+    return {month:m,entradas:t.realReceita,saidas:t.variableTotal+t.fixedTotal+t.investTotal,planejado:o.total,saldo:t.realReceita-(t.variableTotal+t.fixedTotal+t.investTotal)};
+  });
+  const tE=rows.reduce((s,r)=>s+r.entradas,0);
+  const tS=rows.reduce((s,r)=>s+r.saidas,0);
+  const tSaldo=rows.reduce((s,r)=>s+r.saldo,0);
+  const mPos=rows.filter(r=>r.saldo>=0).length;
+  kpiRow.innerHTML=`
+    <div class="anal-kpi"><div class="anal-kpi-label">Receita 12m</div><div class="anal-kpi-val" style="color:var(--income)">${formatMoney(tE)}</div></div>
+    <div class="anal-kpi"><div class="anal-kpi-label">Gasto 12m</div><div class="anal-kpi-val" style="color:var(--danger)">${formatMoney(tS)}</div></div>
+    <div class="anal-kpi"><div class="anal-kpi-label">Saldo 12m</div><div class="anal-kpi-val" style="color:${tSaldo>=0?'var(--accent)':'var(--danger)'}">${formatMoney(tSaldo)}</div></div>
+    <div class="anal-kpi"><div class="anal-kpi-label">Meses positivos</div><div class="anal-kpi-val">${mPos}/12</div></div>`;
+  if(el('subtotal-monthly-entradas')) el('subtotal-monthly-entradas').innerHTML='<strong>'+formatMoney(tE)+'</strong>';
+  if(el('subtotal-monthly-saidas')) el('subtotal-monthly-saidas').innerHTML='<strong>'+formatMoney(tS)+'</strong>';
+  if(el('subtotal-monthly-saldo')) el('subtotal-monthly-saldo').innerHTML='<strong>'+formatMoney(tSaldo)+'</strong>';
+  if(el('subtotal-monthly-planejado')) el('subtotal-monthly-planejado').innerHTML='<strong>'+formatMoney(rows.reduce((s,r)=>s+r.planejado,0))+'</strong>';
+}
+
+function renderAnalCategorias(){
+  const sel=selectedFilterMonth!=='all'?selectedFilterMonth:null;
+  const totals=calcTotals(sel);
+  const catMap={};
+  state.entries.forEach(e=>{
+    if(!isValidEntry(e)||e.type!=='expense') return;
+    expandEntry(e,sel).forEach(inst=>{
+      const cat=(inst.entry.category&&String(inst.entry.category).trim())||'Outros';
+      const bi=getBudgetForMonth(cat,sel);
+      if(inst.entry.fixed||(bi&&bi.isFixed)) return;
+      catMap[cat]=(catMap[cat]||0)+Number(inst.value||0);
+    });
+  });
+  const cats=Object.entries(catMap).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const total=cats.reduce((s,c)=>s+c[1],0);
+  const colors=['#10C9A0','#F0483A','#F5A623','#8B5CF6','#3B82F6','#ec4899','#14b8a6','#f97316'];
+  const rankEl=el('cat-ranking');
+  if(rankEl) rankEl.innerHTML=cats.map(([cat,val],i)=>`
+    <div class="cat-rank-item">
+      <div class="cat-rank-dot" style="background:${colors[i%colors.length]}"></div>
+      <div class="cat-rank-name">${escapeHtml(cat)}</div>
+      <div class="cat-rank-pct">${total>0?Math.round((val/total)*100):0}%</div>
+      <div class="cat-rank-val">${formatMoney(val)}</div>
+    </div>`).join('');
+  try {
+    const c1=el('catDonutChart');
+    if(c1&&typeof Chart!=='undefined'){
+      if(window._catDonutInst){window._catDonutInst.destroy();window._catDonutInst=null;}
+      if(cats.length) window._catDonutInst=new Chart(c1.getContext('2d'),{type:'doughnut',data:{labels:cats.map(c=>c[0]),datasets:[{data:cats.map(c=>c[1]),backgroundColor:colors.slice(0,cats.length),borderWidth:2,borderColor:'#fff'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},cutout:'65%'}});
+    }
+    const c2=el('tipoBarChart');
+    if(c2&&typeof Chart!=='undefined'){
+      if(window._tipoBarInst){window._tipoBarInst.destroy();window._tipoBarInst=null;}
+      window._tipoBarInst=new Chart(c2.getContext('2d'),{type:'bar',data:{labels:['Variável','Fixo','Investimento'],datasets:[{data:[totals.variableTotal,totals.fixedTotal,totals.investTotal],backgroundColor:['#F0483A','#F5A623','#8B5CF6'],borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{callback:v=>'R$'+Number(v).toLocaleString('pt-BR')}}}}});
+    }
+  } catch(e){ console.warn('charts',e); }
+}
+
+function renderAnalProjecao(){
+  const now=new Date();
+  const projecaoCards=el('projecao-cards');
+  const projecaoParcelas=el('projecao-parcelas');
+  if(!projecaoCards) return;
+  const months=[];
+  for(let i=0;i<6;i++){
+    const d=new Date(now.getFullYear(),now.getMonth()+i,1);
+    months.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
+  }
+  projecaoCards.innerHTML=months.map(m=>{
+    const t=calcTotals(m),saidas=t.variableTotal+t.fixedTotal+t.investTotal,saldo=t.realReceita-saidas;
+    const cur=m===now.toISOString().slice(0,7);
+    return `<div class="proj-card ${cur?'proj-card-current':''}">
+      <div class="proj-card-month">${m}</div>
+      <div class="proj-card-receita">${formatMoney(t.realReceita)}<span>receita</span></div>
+      <div class="proj-card-gasto">${formatMoney(saidas)}<span>previsto</span></div>
+      <div class="proj-card-saldo" style="color:${saldo>=0?'var(--accent)':'var(--danger)'}">${formatMoney(saldo)}<span>saldo</span></div>
+    </div>`;
+  }).join('');
+  if(projecaoParcelas){
+    const roots=state.entries.filter(e=>e&&e.series&&Number(e.series.total)>1);
+    if(!roots.length){projecaoParcelas.innerHTML='<div class="small muted" style="padding:12px">Nenhum parcelamento ativo.</div>';return;}
+    projecaoParcelas.innerHTML=roots.map(root=>{
+      const children=state.entries.filter(c=>c.seriesId===root.id);
+      const desc=(root.description||'').replace(/ \(\d+\/\d+\)$/,'');
+      const paid=children.filter(c=>{const d=new Date((c.competence||'2000-01')+'-01');return d<now;}).length;
+      const pct=root.series.total>0?Math.round((paid/root.series.total)*100):0;
+      return `<div class="parcela-prog-item">
+        <div class="parcela-prog-header">
+          <span>${escapeHtml(desc)}</span>
+          <span class="small muted">${paid}/${root.series.total} · ${formatMoney(root.value)}/mês</span>
+        </div>
+        <div style="background:var(--border);border-radius:4px;height:6px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:var(--accent);border-radius:4px"></div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+}
+
+function renderGastosRecentes(sel){
+  const container=el('gastos-recentes-list'); if(!container) return;
+  const rows=[];
+  state.entries.forEach(e=>{
+    if(!isValidEntry(e)||e.type!=='expense'||e.fixed) return;
+    if(e.seriesId) return;
+    const bi=getBudgetForMonth((e.category||'').trim(),sel);
+    if(bi&&bi.isFixed) return;
+    expandEntry(e,sel).forEach(inst=>rows.push({entry:e,value:inst.value,date:e.date}));
+  });
+  rows.sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const recent=rows.slice(0,5);
+  if(!recent.length){container.innerHTML='<div class="small muted" style="padding:12px 0">Nenhum gasto variável neste mês.</div>';return;}
+  container.innerHTML=recent.map(r=>`
+    <div class="gasto-recente-item">
+      <div class="gasto-recente-left">
+        <span class="gasto-recente-cat">${escapeHtml(r.entry.category||'—')}</span>
+        <span class="gasto-recente-desc">${escapeHtml(r.entry.description||'')}</span>
+      </div>
+      <div class="gasto-recente-val">−${formatMoney(r.value)}</div>
+    </div>`).join('');
+}
+
+window.renderOrcamentoNovo=renderOrcamentoNovo;
+window.renderLembretes=renderLembretes;
+window.loadLembretesFromCloud=loadLembretesFromCloud;
+
+
+
 // ─── FORM HELPERS ─────────────────────────────────────────────────────────────
 const clearForm = () => {
   el('input-desc').value  = '';
@@ -2040,11 +2461,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   populateCategorySelect();
   renderAll();
-  initLembretes();
-  initAnalTabs();
-
-  // Load lembretes from cloud when logged in
-  if(currentUser) loadLembretesFromCloud();
+  try { initLembretes(); } catch(e){ console.warn('initLembretes',e); }
+  try { initAnalTabs(); } catch(e){ console.warn('initAnalTabs',e); }
+  try { if(typeof currentUser !== 'undefined' && currentUser) loadLembretesFromCloud(); } catch(e){}
 });
 
 // ─── EXPOSE GLOBALS ───────────────────────────────────────────────────────────
