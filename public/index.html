@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Finance · Controle</title>
 
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="css/style.css">
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
@@ -22,7 +22,6 @@
     <!-- Desktop tabs -->
     <nav class="desktop-tabs" style="display:none; flex:1;">
       <button class="nav-tab-btn tab-btn active" data-target="inicial">Início</button>
-      <button class="nav-tab-btn tab-btn" data-target="gastos-diarios">Gastos Diários</button>
       <button class="nav-tab-btn tab-btn" data-target="contas">Contas</button>
       <button class="nav-tab-btn tab-btn" data-target="orcamentos">Orçamentos</button>
       <button class="nav-tab-btn tab-btn" data-target="receitas">Receitas</button>
@@ -58,69 +57,79 @@
     <!-- ========= PANEL 1 · INÍCIO ========= -->
     <section id="panel-inicial" class="panel active">
 
-      <div class="progress-card">
-        <div class="prog-label" id="global-progress-label">Progresso do mês</div>
-        <div class="prog-title" id="progress-title-display">R$ 0,00 / R$ 0,00</div>
-        <div class="prog-track global-progress-bar-container">
-          <div class="prog-bar global-progress-bar" id="global-progress-bar" style="width:0%;background:var(--accent)">0%</div>
+      <!-- ── Barra de progresso do orçamento ── -->
+      <div class="dash-progress-card">
+        <div class="dash-prog-header">
+          <div>
+            <div class="dash-prog-title">Progresso do Orçamento</div>
+            <div class="dash-prog-month" id="global-progress-label">—</div>
+          </div>
+          <div class="dash-prog-values" id="progress-title-display">R$ 0,00 / R$ 0,00</div>
+        </div>
+        <div class="dash-prog-track">
+          <div class="dash-prog-bar" id="global-progress-bar" style="width:0%">0%</div>
+        </div>
+        <div class="dash-prog-legend">
+          <span>Variáveis <strong id="k-variable">R$ 0,00</strong></span>
+          <span>Fixas <strong id="k-fixed">R$ 0,00</strong></span>
+          <span>Parcelas <strong id="k-parcelas-total">R$ 0,00</strong></span>
+          <span>Invest. <strong id="k-invest" style="color:var(--invest)">R$ 0,00</strong></span>
         </div>
       </div>
 
-      <!-- KPIs Row 1: saldo + orçamento disponível + total gasto -->
-      <div class="kpi-row kpi-row-3" style="margin-bottom:10px">
-        <div class="kpi saldo-kpi">
-          <div class="label">Saldo Atual</div>
-          <div class="label-sub">Receita − Total Gasto</div>
-          <strong id="k-saldo-atual" class="money">R$ 0,00</strong>
+      <!-- ── KPIs principais ── -->
+      <div class="dash-kpi-grid">
+        <div class="dash-kpi dash-kpi-saldo">
+          <div class="dash-kpi-icon">💰</div>
+          <div class="dash-kpi-body">
+            <div class="dash-kpi-label">Saldo Disponível</div>
+            <div class="dash-kpi-sub">Orçamento − Total Gasto</div>
+            <strong class="dash-kpi-value" id="k-budget-net">R$ 0,00</strong>
+          </div>
         </div>
-        <div class="kpi total-kpi">
-          <div class="label">Total Gasto</div>
-          <div class="label-sub">Este mês</div>
-          <strong id="k-total-gasto" class="money">R$ 0,00</strong>
+        <div class="dash-kpi dash-kpi-gasto">
+          <div class="dash-kpi-icon">📊</div>
+          <div class="dash-kpi-body">
+            <div class="dash-kpi-label">Total Gasto</div>
+            <div class="dash-kpi-sub">Este mês</div>
+            <strong class="dash-kpi-value" id="k-total-gasto">R$ 0,00</strong>
+          </div>
         </div>
-        <div class="kpi net-kpi">
-          <div class="label">Orçamento Livre</div>
-          <div class="label-sub">Disponível p/ gastar</div>
-          <strong id="k-budget-net" class="money">R$ 0,00</strong>
-        </div>
-      </div>
-
-      <!-- KPIs Row 2: breakdown -->
-      <div class="kpi-row kpi-row-3" style="margin-bottom:10px">
-        <div class="kpi danger-kpi">
-          <div class="label">Variáveis</div>
-          <strong id="k-variable" class="money">R$ 0,00</strong>
-        </div>
-        <div class="kpi warn-kpi">
-          <div class="label">Fixas</div>
-          <strong id="k-fixed" class="money">R$ 0,00</strong>
-        </div>
-        <div class="kpi invest-kpi">
-          <div class="label">Investimentos</div>
-          <strong id="k-invest" class="money" style="color:var(--invest)">R$ 0,00</strong>
+        <div class="dash-kpi dash-kpi-orcamento">
+          <div class="dash-kpi-icon">🎯</div>
+          <div class="dash-kpi-body">
+            <div class="dash-kpi-label">Orçamento Total</div>
+            <div class="dash-kpi-sub">Fixos + Variáveis + Invest.</div>
+            <strong class="dash-kpi-value" id="k-orcamento-total">R$ 0,00</strong>
+          </div>
         </div>
       </div>
 
-      <!-- Gastos recentes (últimas 5 despesas variáveis) -->
-      <div class="card" id="card-gastos-recentes">
+      <!-- ── Lembretes: Contas a Pagar ── -->
+      <div class="card dash-lembretes-card">
+        <div class="card-header">
+          <span class="card-title">🔔 Contas a Pagar</span>
+          <button class="btn-tool" id="btn-add-lembrete" style="background:var(--accent);color:#fff;border-color:var(--accent)">+ Adicionar</button>
+        </div>
+        <div id="lembretes-list">
+          <div class="lembrete-empty small muted">Nenhuma conta cadastrada. Clique em "+ Adicionar" para criar um lembrete.</div>
+        </div>
+      </div>
+
+      <!-- ── Gastos recentes ── -->
+      <div class="card">
         <div class="card-header">
           <span class="card-title">⚡ Gastos Recentes</span>
           <button class="btn-tool" onclick="window.__activateTarget&&window.__activateTarget('gastos-diarios')" style="font-size:0.72rem">Ver todos →</button>
         </div>
-        <div id="gastos-recentes-list" style="display:flex;flex-direction:column;gap:0"></div>
+        <div id="gastos-recentes-list"></div>
       </div>
 
-      <!-- Legacy hidden compat -->
-      <span id="k-receita" hidden>0</span>
-      <span id="k-budget" hidden>0</span>
-      <span id="k-net" hidden>0</span>
-      <span id="k-orcamento-total" hidden>0</span>
-
-      <!-- Variable expenses + investment meta table -->
+      <!-- ── Tabela de categorias variáveis ── -->
       <div class="card">
         <div class="card-header">
-          <span class="card-title">Despesas Variáveis &amp; Meta de Investimentos</span>
-          <span class="small muted">orçado × realizado por categoria</span>
+          <span class="card-title">Despesas Variáveis &amp; Investimentos</span>
+          <span class="small muted">orçado × realizado</span>
         </div>
         <div class="table-wrap">
           <table id="variable-table">
@@ -128,7 +137,7 @@
               <tr>
                 <th>Categoria</th>
                 <th class="right">Realizado</th>
-                <th class="right">Orçado / Meta</th>
+                <th class="right">Orçado</th>
                 <th class="right" style="min-width:120px">Progresso</th>
                 <th></th>
               </tr>
@@ -136,7 +145,7 @@
             <tbody></tbody>
             <tfoot>
               <tr>
-                <td><strong>Subtotal despesas variáveis</strong></td>
+                <td><strong>Subtotal variáveis</strong></td>
                 <td class="right" id="subtotal-variable-table"><strong>R$ 0,00</strong></td>
                 <td class="right" id="subtotal-variable-budget"><strong>R$ 0,00</strong></td>
                 <td></td><td></td>
@@ -145,48 +154,11 @@
           </table>
         </div>
       </div>
-    </section>
 
-    <!-- ========= PANEL: GASTOS DIÁRIOS ========= -->
-    <section id="panel-gastos-diarios" class="panel">
-      <div class="card">
-        <div class="card-header" style="flex-wrap:wrap;gap:8px">
-          <span class="card-title">💸 Gastos Diários</span>
-          <span class="small muted">Apenas despesas variáveis</span>
-        </div>
-
-        <!-- Filtros de período -->
-        <div class="gd-filters">
-          <div class="gd-period-pills" id="gd-period-pills">
-            <button class="gd-pill active" data-period="month">Este mês</button>
-            <button class="gd-pill" data-period="today">Hoje</button>
-            <button class="gd-pill" data-period="7d">7 dias</button>
-            <button class="gd-pill" data-period="30d">30 dias</button>
-            <button class="gd-pill" data-period="prev-month">Mês anterior</button>
-            <button class="gd-pill" data-period="custom">Período...</button>
-          </div>
-          <div id="gd-custom-range" style="display:none;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px" class="gd-custom-range">
-            <input type="date" id="gd-from" class="form-input" style="width:140px;padding:6px 10px;font-size:0.82rem"/>
-            <span class="small muted">até</span>
-            <input type="date" id="gd-to" class="form-input" style="width:140px;padding:6px 10px;font-size:0.82rem"/>
-            <button class="btn btn-primary btn-sm" id="gd-apply-custom">Aplicar</button>
-          </div>
-
-          <!-- Filtros por categoria -->
-          <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <label class="small" style="font-weight:700;white-space:nowrap">Categoria:</label>
-            <select id="gd-filter-cat" class="form-select" style="max-width:180px;padding:6px 10px;font-size:0.82rem">
-              <option value="">Todas</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- Totalizador do período -->
-        <div id="gd-period-summary" class="gd-period-summary"></div>
-
-        <!-- Lista por dia estilo extrato -->
-        <div id="gd-list" class="gd-list"></div>
-      </div>
+      <!-- compat hidden -->
+      <span id="k-receita" hidden>0</span>
+      <span id="k-budget" hidden>0</span>
+      <span id="k-net" hidden>0</span>
     </section>
 
     <!-- ========= PANEL 2 · CONTAS FIXAS & PARCELAS ========= -->
@@ -242,61 +214,39 @@
     <!-- ========= PANEL 3 · ORÇAMENTOS ========= -->
     <section id="panel-orcamentos" class="panel">
 
-      <!-- Planejador: fluxo Receita → Fixos → Parcelas → Saldo -->
-      <div class="card orc-planner-card" id="orc-planner">
-        <div class="card-header">
-          <span class="card-title">📋 Planejador do Mês <span id="orc-mes-label" style="font-weight:400;font-size:0.82rem;color:var(--text-2)"></span></span>
+      <!-- Cabeçalho com mês e ações -->
+      <div class="orc-header-card">
+        <div class="orc-header-left">
+          <div class="orc-header-title">Planejador Financeiro</div>
+          <div class="orc-header-month">📅 <span id="budget-active-month">—</span></div>
         </div>
-        <div class="orc-flow" id="orc-flow-grid">
-          <!-- rendered by renderOrcamentoPlanner() -->
+        <div class="orc-header-actions">
+          <button id="btn-inherit-budget" class="btn-tool" style="color:var(--accent);border-color:rgba(16,201,160,0.4)"
+            onclick="(function(){
+              const sel=(typeof selectedFilterMonth!=='undefined'&&selectedFilterMonth!=='all')?selectedFilterMonth:new Date().toISOString().slice(0,7);
+              const parts=sel.split('-').map(Number);
+              const prevDate=new Date(parts[0],parts[1]-2,1);
+              const prev=prevDate.getFullYear()+'-'+String(prevDate.getMonth()+1).padStart(2,'0');
+              if(typeof inheritBudgetFrom==='function')inheritBudgetFrom(prev,sel);
+            })()">↙ Copiar mês anterior</button>
+          <button id="btn-open-budgets-modal" class="btn btn-primary btn-sm">+ Nova Categoria</button>
         </div>
       </div>
 
-      <!-- Tabela de categorias orçadas -->
-      <div class="card">
-        <div class="section-header" style="flex-wrap:wrap;gap:8px">
-          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-            <h3>Categorias</h3>
-            <span style="display:inline-flex;align-items:center;gap:5px;background:rgba(16,201,160,0.12);border:1px solid rgba(16,201,160,0.3);border-radius:6px;padding:3px 10px;font-size:0.75rem;font-weight:600;color:var(--accent)">
-              📅 <span id="budget-active-month">—</span>
-            </span>
-          </div>
-          <div class="toolbar">
-            <button id="btn-inherit-budget" class="btn-tool" style="color:var(--accent);border-color:rgba(16,201,160,0.4)"
-              onclick="(function(){
-                const sel=(typeof selectedFilterMonth!=='undefined'&&selectedFilterMonth!=='all')?selectedFilterMonth:new Date().toISOString().slice(0,7);
-                const parts=sel.split('-').map(Number);
-                const prevDate=new Date(parts[0],parts[1]-2,1);
-                const prev=prevDate.getFullYear()+'-'+String(prevDate.getMonth()+1).padStart(2,'0');
-                if(typeof inheritBudgetFrom==='function')inheritBudgetFrom(prev,sel);
-              })()">↙ Herdar mês anterior</button>
-            <button id="btn-open-budgets-modal" class="btn btn-primary btn-sm">+ Nova Categoria</button>
-          </div>
+      <!-- Resumo do fluxo: Receita → Comprometido → Livre -->
+      <div id="orc-fluxo-resumo" class="orc-fluxo-resumo"><!-- rendered by JS --></div>
+
+      <!-- Distribuição visual por tipo -->
+      <div class="orc-dist-grid" id="orc-dist-grid"><!-- rendered by JS --></div>
+
+      <!-- Categorias com progresso -->
+      <div class="card" style="margin-top:4px">
+        <div class="card-header">
+          <span class="card-title">Categorias</span>
+          <span class="small muted">Toque para editar</span>
         </div>
-        <div class="table-wrap">
-          <table id="modal-budgets-table">
-            <thead>
-              <tr>
-                <th>Categoria</th>
-                <th class="right">Orçado</th>
-                <th class="right">Gasto</th>
-                <th class="right">Restante</th>
-                <th class="right" style="min-width:100px">Progresso</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-            <tfoot>
-              <tr>
-                <td><strong>Total</strong></td>
-                <td class="right" id="subtotal-budgets"><strong>R$ 0,00</strong></td>
-                <td class="right" id="subtotal-budgets-gasto"><strong>R$ 0,00</strong></td>
-                <td class="right" id="subtotal-budgets-restante"><strong>R$ 0,00</strong></td>
-                <td></td><td></td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
+        <div id="orc-categorias-list"><!-- rendered by JS --></div>
+        <div class="orc-subtotals" id="orc-subtotals"><!-- rendered by JS --></div>
       </div>
     </section>
 
@@ -356,36 +306,86 @@
       </div>
     </section>
 
-    <!-- ========= PANEL 5 · VISÃO MENSAL ========= -->
+    <!-- ========= PANEL 5 · DASHBOARD ANALÍTICO ========= -->
     <section id="panel-visao-mensal" class="panel">
-      <div class="card">
-        <div class="section-header">
-          <h3>Visão Mês a Mês · 12 meses</h3>
-          <button id="btn-export-monthly" class="btn-tool">↑ Excel</button>
+
+      <!-- Tabs analíticas -->
+      <div class="anal-tabs">
+        <button class="anal-tab active" data-atab="evolucao">📈 Evolução</button>
+        <button class="anal-tab" data-atab="categorias">🍩 Categorias</button>
+        <button class="anal-tab" data-atab="projecao">🔮 Projeção</button>
+      </div>
+
+      <!-- Tab: Evolução mês a mês -->
+      <div id="atab-evolucao" class="anal-panel active">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Evolução 12 meses</span>
+            <button id="btn-export-monthly" class="btn-tool">↑ Excel</button>
+          </div>
+          <div style="position:relative;height:260px;margin-bottom:16px">
+            <canvas id="monthlyChart"></canvas>
+          </div>
+          <!-- KPIs do período -->
+          <div class="anal-kpi-row" id="anal-kpi-row"><!-- JS --></div>
         </div>
-        <canvas id="monthlyChart" style="max-height:300px;margin-bottom:16px"></canvas>
-        <div class="table-wrap">
-          <table id="monthly-projection">
-            <thead>
-              <tr>
-                <th>Mês</th>
-                <th class="right">Entradas</th>
-                <th class="right">Saídas</th>
-                <th class="right">Planejado</th>
-                <th class="right">Saldo</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-            <tfoot>
-              <tr>
-                <td><strong>Total 12m</strong></td>
-                <td class="right" id="subtotal-monthly-entradas"><strong>R$ 0,00</strong></td>
-                <td class="right" id="subtotal-monthly-saidas"><strong>R$ 0,00</strong></td>
-                <td class="right" id="subtotal-monthly-planejado"><strong>R$ 0,00</strong></td>
-                <td class="right" id="subtotal-monthly-saldo"><strong>R$ 0,00</strong></td>
-              </tr>
-            </tfoot>
-          </table>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Tabela Mês a Mês</span></div>
+          <div class="table-wrap">
+            <table id="monthly-projection">
+              <thead>
+                <tr>
+                  <th>Mês</th>
+                  <th class="right">Receita</th>
+                  <th class="right">Gasto</th>
+                  <th class="right">Saldo</th>
+                  <th class="right">Planejado</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+              <tfoot>
+                <tr>
+                  <td><strong>Total 12m</strong></td>
+                  <td class="right" id="subtotal-monthly-entradas"><strong>R$ 0,00</strong></td>
+                  <td class="right" id="subtotal-monthly-saidas"><strong>R$ 0,00</strong></td>
+                  <td class="right" id="subtotal-monthly-saldo"><strong>R$ 0,00</strong></td>
+                  <td class="right" id="subtotal-monthly-planejado"><strong>R$ 0,00</strong></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab: Categorias (donut + ranking) -->
+      <div id="atab-categorias" class="anal-panel">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Gastos por Categoria</span></div>
+          <div class="anal-cat-layout">
+            <div style="position:relative;height:220px;width:220px;flex-shrink:0">
+              <canvas id="catDonutChart"></canvas>
+            </div>
+            <div id="cat-ranking" class="cat-ranking"><!-- JS --></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Fixo vs Variável vs Investimento</span></div>
+          <div style="position:relative;height:200px">
+            <canvas id="tipoBarChart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab: Projeção futura -->
+      <div id="atab-projecao" class="anal-panel">
+        <div class="card">
+          <div class="card-header"><span class="card-title">🔮 Projeção dos Próximos 6 Meses</span></div>
+          <p class="small muted" style="margin-bottom:12px">Baseado em receitas recorrentes, fixos e parcelas cadastrados.</p>
+          <div id="projecao-cards" class="projecao-cards"><!-- JS --></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Parcelas em Andamento</span></div>
+          <div id="projecao-parcelas"><!-- JS --></div>
         </div>
       </div>
     </section>
@@ -393,16 +393,8 @@
     <!-- ========= PANEL 6 · HISTÓRICO ========= -->
     <section id="panel-tabela" class="panel">
       <div class="card">
-        <div class="section-header" style="flex-wrap:wrap;gap:8px">
-          <h3>Histórico</h3>
-          <div style="display:flex;gap:6px;flex-wrap:wrap" id="hist-type-filters">
-            <button class="gd-pill active" data-htype="expense">Despesas</button>
-            <button class="gd-pill" data-htype="all">Todos</button>
-            <button class="gd-pill" data-htype="income">Receitas</button>
-            <button class="gd-pill" data-htype="fixed">Despesas Fixas</button>
-            <button class="gd-pill" data-htype="parcela">Parcelamentos</button>
-            <button class="gd-pill" data-htype="investment">Investimentos</button>
-          </div>
+        <div class="section-header">
+          <h3>Histórico Completo</h3>
         </div>
         <div class="table-wrap">
           <table id="entries-table-duplicate">
@@ -436,9 +428,9 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
         <span class="nav-label">Início</span>
       </button>
-      <button class="nav-item tab-btn" data-target="gastos-diarios">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-        <span class="nav-label">Gastos</span>
+      <button class="nav-item tab-btn" data-target="contas">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+        <span class="nav-label">Contas</span>
       </button>
       <button class="nav-item tab-btn" data-target="orcamentos">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0110 10H12V2z" fill="currentColor" stroke="none" opacity="0.3"/></svg>
@@ -448,9 +440,9 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
         <span class="nav-label">Receitas</span>
       </button>
-      <button class="nav-item tab-btn" data-target="contas">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
-        <span class="nav-label">Contas</span>
+      <button class="nav-item tab-btn" data-target="visao-mensal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        <span class="nav-label">Mensal</span>
       </button>
       <button class="nav-item tab-btn" data-target="tabela">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
@@ -467,37 +459,49 @@
   <!-- ===================== OVERLAY ===================== -->
   <div class="sheet-overlay" id="sheet-overlay"></div>
 
-  <!-- ===================== BOTTOM SHEET ===================== -->
+  <!-- ===================== BOTTOM SHEET (NOVO LANÇAMENTO) ===================== -->
   <div class="bottom-sheet" id="add-entry-sheet">
     <div class="sheet-handle"></div>
-    <div class="sheet-title">
-      <span class="icon-dot"></span>
-      Novo Lançamento
+
+    <!-- Tipo seletor visual -->
+    <div class="sheet-type-pills">
+      <button class="sheet-type-pill active" data-type="expense">
+        <span class="stp-icon">💸</span>
+        <span class="stp-label">Despesa</span>
+      </button>
+      <button class="sheet-type-pill" data-type="income">
+        <span class="stp-icon">💵</span>
+        <span class="stp-label">Receita</span>
+      </button>
+      <button class="sheet-type-pill" data-type="investment">
+        <span class="stp-icon">💜</span>
+        <span class="stp-label">Investimento</span>
+      </button>
+    </div>
+    <input type="hidden" id="input-type" value="expense" />
+
+    <!-- Valor em destaque -->
+    <div class="sheet-valor-block">
+      <span class="sheet-valor-prefix">R$</span>
+      <input id="input-value" type="text" inputmode="decimal" placeholder="0,00" class="sheet-valor-input" autocomplete="off"/>
     </div>
 
+    <!-- Campos do formulário -->
     <div class="form-grid">
 
-      <div class="form-row">
-        <label class="form-label">Tipo</label>
-        <select id="input-type" class="form-select">
-          <option value="expense">Despesa</option>
-          <option value="income">Receita</option>
-          <option value="investment">Investimento 💜</option>
-        </select>
+      <div class="form-row full" id="category-row">
+        <label class="form-label">Categoria</label>
+        <select id="input-category-select" class="form-select"></select>
       </div>
 
-      <!-- Fixo/Variável: aparece logo após o tipo e filtra as categorias -->
-      <div class="form-row" id="fixed-row">
-        <label class="form-check" for="input-fixed">
-          <input id="input-fixed" type="checkbox" />
-          <span class="form-check-label" id="fixed-check-label">Custo fixo mensal</span>
-        </label>
-        <span class="form-check-sublabel" id="fixed-sublabel">mesmo valor todo mês · ex: aluguel, internet</span>
+      <div class="form-row full" id="new-cat-row" style="display:none">
+        <label class="form-label">Nova categoria</label>
+        <input id="input-category-text" type="text" placeholder="Ex: Mercado" class="form-input" />
       </div>
 
-      <div class="form-row">
-        <label class="form-label">Valor</label>
-        <input id="input-value" type="text" inputmode="decimal" placeholder="0,00" class="form-input" />
+      <div class="form-row full">
+        <label class="form-label">Descrição</label>
+        <input id="input-desc" type="text" placeholder="Opcional — Ex: Conta de luz" class="form-input" />
       </div>
 
       <div class="form-row">
@@ -510,28 +514,17 @@
         <input id="input-competence" type="month" class="form-input" />
       </div>
 
-      <!-- Category select — populated dynamically for all types (expense, investment) -->
-      <div class="form-row full">
-        <label class="form-label">Categoria</label>
-        <select id="input-category-select" class="form-select"></select>
-      </div>
-
-      <!-- New category text field — appears when "__new__" is selected -->
-      <div class="form-row full" id="new-cat-row" style="display:none">
-        <label class="form-label">Nome da nova categoria</label>
-        <input id="input-category-text" type="text" placeholder="ex: Criptomoedas" class="form-input" style="display:block" />
-      </div>
-
-      <div class="form-row full">
-        <label class="form-label">Descrição</label>
-        <input id="input-desc" type="text" placeholder="Descrição (opcional)" class="form-input" />
-      </div>
-
-      <div class="form-row">
-        <label class="form-check" for="input-parceled">
-          <input id="input-parceled" type="checkbox" />
-          <span class="form-check-label">Parcelado</span>
+      <!-- Toggle fixo / parcelado -->
+      <div class="form-row full sheet-toggles" id="fixed-row">
+        <label class="sheet-toggle-chip" id="chip-fixed">
+          <input id="input-fixed" type="checkbox" />
+          <span id="fixed-check-label">🔒 Fixo todo mês</span>
         </label>
+        <label class="sheet-toggle-chip" id="chip-parceled">
+          <input id="input-parceled" type="checkbox" />
+          <span>📋 Parcelado</span>
+        </label>
+        <span class="form-check-sublabel" id="fixed-sublabel" style="display:none">Mesmo valor todo mês · ex: aluguel</span>
       </div>
 
       <div class="parcel-group" id="parcel-group">
@@ -549,7 +542,7 @@
 
     <div class="form-actions">
       <button id="btn-clear" class="btn btn-ghost">Limpar</button>
-      <button id="btn-add"   class="btn btn-primary">Adicionar</button>
+      <button id="btn-add" class="btn btn-primary">✓ Salvar</button>
     </div>
   </div>
 
@@ -580,7 +573,7 @@
   </div>
 
   <!-- ===================== APP.JS ===================== -->
-  <script type="module" src="app.js"></script>
+  <script type="module" src="js/app.js"></script>
 
   <!-- ===================== UI CONTROLLER ===================== -->
   <script>
@@ -654,6 +647,22 @@
     window.addEventListener('app:state-changed', () => setTimeout(up, 100));
   })();
   </script>
+
+  <!-- Modal lembrete -->
+  <div id="lembrete-modal-back" style="display:none;position:fixed;inset:0;background:rgba(13,31,60,0.55);z-index:800;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(3px)">
+    <div class="app-edit-modal" style="max-width:400px">
+      <h3 id="lembrete-modal-title">Novo Lembrete</h3>
+      <input type="hidden" id="lembrete-edit-id"/>
+      <div class="app-row"><label>Descrição</label><input id="lembrete-desc" placeholder="Ex: Boleto da pós"/></div>
+      <div class="app-row"><label>Valor (R$) — deixe 0 para variável</label><input id="lembrete-valor" type="number" step="0.01" min="0" placeholder="0,00"/></div>
+      <div class="app-row"><label>Dia do vencimento (todo mês)</label><input id="lembrete-dia" type="number" min="1" max="31" placeholder="Ex: 10"/></div>
+      <div class="app-row"><label>Categoria</label><input id="lembrete-cat" placeholder="Ex: Educação"/></div>
+      <div class="app-actions">
+        <button id="lembrete-cancel" class="muted-button">Cancelar</button>
+        <button id="lembrete-save" style="background:var(--accent);color:#fff">Salvar</button>
+      </div>
+    </div>
+  </div>
 
 </body>
 </html>
