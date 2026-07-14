@@ -22,6 +22,7 @@
     <!-- Desktop tabs -->
     <nav class="desktop-tabs" style="display:none; flex:1;">
       <button class="nav-tab-btn tab-btn active" data-target="inicial">Início</button>
+      <button class="nav-tab-btn tab-btn" data-target="gastos-diarios">Gastos Diários</button>
       <button class="nav-tab-btn tab-btn" data-target="contas">Contas</button>
       <button class="nav-tab-btn tab-btn" data-target="orcamentos">Orçamentos</button>
       <button class="nav-tab-btn tab-btn" data-target="receitas">Receitas</button>
@@ -70,37 +71,45 @@
           <div class="dash-prog-bar" id="global-progress-bar" style="width:0%">0%</div>
         </div>
         <div class="dash-prog-legend">
-          <span>Variáveis <strong id="k-variable">R$ 0,00</strong></span>
-          <span>Fixas <strong id="k-fixed">R$ 0,00</strong></span>
-          <span>Parcelas <strong id="k-parcelas-total">R$ 0,00</strong></span>
-          <span>Invest. <strong id="k-invest" style="color:var(--invest)">R$ 0,00</strong></span>
+          <span class="prog-leg-fixas">🔒 Fixas <strong id="k-fixed">R$ 0,00</strong></span>
+          <span class="prog-leg-var">💸 Variáveis <strong id="k-variable">R$ 0,00</strong></span>
+          <span class="prog-leg-parc">📋 Parcelas <strong id="k-parcelas-total">R$ 0,00</strong></span>
+          <span class="prog-leg-inv">💜 Invest. <strong id="k-invest" style="color:var(--invest)">R$ 0,00</strong></span>
         </div>
       </div>
 
       <!-- ── KPIs principais ── -->
-      <div class="dash-kpi-grid">
-        <div class="dash-kpi dash-kpi-saldo">
-          <div class="dash-kpi-icon">💰</div>
+      <div class="dash-kpi-grid dash-kpi-grid-4">
+        <div class="dash-kpi dash-kpi-receita">
+          <div class="dash-kpi-icon">💵</div>
           <div class="dash-kpi-body">
-            <div class="dash-kpi-label">Saldo Disponível</div>
-            <div class="dash-kpi-sub">Orçamento − Total Gasto</div>
-            <strong class="dash-kpi-value" id="k-budget-net">R$ 0,00</strong>
+            <div class="dash-kpi-label">Receita</div>
+            <div class="dash-kpi-sub">Entradas do mês</div>
+            <strong class="dash-kpi-value" id="k-receita-display">R$ 0,00</strong>
+          </div>
+        </div>
+        <div class="dash-kpi dash-kpi-orcamento">
+          <div class="dash-kpi-icon">🎯</div>
+          <div class="dash-kpi-body">
+            <div class="dash-kpi-label">Total Planejado</div>
+            <div class="dash-kpi-sub">Fixos + Variáveis + Invest.</div>
+            <strong class="dash-kpi-value" id="k-orcamento-total">R$ 0,00</strong>
           </div>
         </div>
         <div class="dash-kpi dash-kpi-gasto">
           <div class="dash-kpi-icon">📊</div>
           <div class="dash-kpi-body">
             <div class="dash-kpi-label">Total Gasto</div>
-            <div class="dash-kpi-sub">Este mês</div>
+            <div class="dash-kpi-sub">Fixas + Variáveis + Invest.</div>
             <strong class="dash-kpi-value" id="k-total-gasto">R$ 0,00</strong>
           </div>
         </div>
-        <div class="dash-kpi dash-kpi-orcamento">
-          <div class="dash-kpi-icon">🎯</div>
+        <div class="dash-kpi dash-kpi-saldo">
+          <div class="dash-kpi-icon">✅</div>
           <div class="dash-kpi-body">
-            <div class="dash-kpi-label">Orçamento Total</div>
-            <div class="dash-kpi-sub">Fixos + Variáveis + Invest.</div>
-            <strong class="dash-kpi-value" id="k-orcamento-total">R$ 0,00</strong>
+            <div class="dash-kpi-label">Saldo Livre</div>
+            <div class="dash-kpi-sub">Receita − Total Gasto</div>
+            <strong class="dash-kpi-value" id="k-budget-net">R$ 0,00</strong>
           </div>
         </div>
       </div>
@@ -111,8 +120,11 @@
           <span class="card-title">🔔 Contas a Pagar</span>
           <button class="btn-tool" id="btn-add-lembrete" style="background:var(--accent);color:#fff;border-color:var(--accent)">+ Adicionar</button>
         </div>
+        <p class="small muted" style="margin-bottom:10px;font-size:0.72rem;line-height:1.5">
+          Contas pendentes de pagamento. Ficam aqui até você confirmar o pagamento — só então são lançadas como gasto efetivo.
+        </p>
         <div id="lembretes-list">
-          <div class="lembrete-empty small muted">Nenhuma conta cadastrada. Clique em "+ Adicionar" para criar um lembrete.</div>
+          <div class="lembrete-empty small muted">Nenhuma conta. Clique em "+ Adicionar" para criar.</div>
         </div>
       </div>
 
@@ -159,6 +171,40 @@
       <span id="k-receita" hidden>0</span>
       <span id="k-budget" hidden>0</span>
       <span id="k-net" hidden>0</span>
+    </section>
+
+    <!-- ========= PANEL · GASTOS DIÁRIOS ========= -->
+    <section id="panel-gastos-diarios" class="panel">
+      <div class="card">
+        <div class="card-header" style="flex-wrap:wrap;gap:8px">
+          <span class="card-title">💸 Gastos Diários</span>
+          <span class="small muted">Despesas variáveis</span>
+        </div>
+        <div class="gd-filters">
+          <div class="gd-period-pills" id="gd-period-pills">
+            <button class="gd-pill active" data-period="month">Este mês</button>
+            <button class="gd-pill" data-period="today">Hoje</button>
+            <button class="gd-pill" data-period="7d">7 dias</button>
+            <button class="gd-pill" data-period="30d">30 dias</button>
+            <button class="gd-pill" data-period="prev-month">Mês anterior</button>
+            <button class="gd-pill" data-period="custom">Período...</button>
+          </div>
+          <div id="gd-custom-range" style="display:none;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+            <input type="date" id="gd-from" class="form-input" style="width:140px;padding:6px 10px;font-size:0.82rem"/>
+            <span class="small muted">até</span>
+            <input type="date" id="gd-to" class="form-input" style="width:140px;padding:6px 10px;font-size:0.82rem"/>
+            <button class="btn btn-primary btn-sm" id="gd-apply-custom">Aplicar</button>
+          </div>
+          <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <label class="small" style="font-weight:700">Categoria:</label>
+            <select id="gd-filter-cat" class="form-select" style="max-width:180px;padding:6px 10px;font-size:0.82rem">
+              <option value="">Todas</option>
+            </select>
+          </div>
+        </div>
+        <div id="gd-period-summary" class="gd-period-summary"></div>
+        <div id="gd-list" class="gd-list"></div>
+      </div>
     </section>
 
     <!-- ========= PANEL 2 · CONTAS FIXAS & PARCELAS ========= -->
@@ -428,6 +474,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
         <span class="nav-label">Início</span>
       </button>
+      <button class="nav-item tab-btn" data-target="gastos-diarios">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span class="nav-label">Gastos</span>
+      </button>
       <button class="nav-item tab-btn" data-target="contas">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
         <span class="nav-label">Contas</span>
@@ -650,16 +700,52 @@
 
   <!-- Modal lembrete -->
   <div id="lembrete-modal-back" style="display:none;position:fixed;inset:0;background:rgba(13,31,60,0.55);z-index:800;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(3px)">
-    <div class="app-edit-modal" style="max-width:400px">
-      <h3 id="lembrete-modal-title">Novo Lembrete</h3>
+    <div class="app-edit-modal" style="max-width:420px">
+      <h3 id="lembrete-modal-title">Nova Conta a Pagar</h3>
       <input type="hidden" id="lembrete-edit-id"/>
-      <div class="app-row"><label>Descrição</label><input id="lembrete-desc" placeholder="Ex: Boleto da pós"/></div>
-      <div class="app-row"><label>Valor (R$) — deixe 0 para variável</label><input id="lembrete-valor" type="number" step="0.01" min="0" placeholder="0,00"/></div>
+      <div class="app-row"><label>Descrição <span class="small muted">Ex: Boleto da pós, Parcela do carro</span></label><input id="lembrete-desc" placeholder="Ex: Boleto da faculdade"/></div>
+      <div class="app-row"><label>Categoria</label><input id="lembrete-cat" placeholder="Ex: Educação, Transporte"/></div>
       <div class="app-row"><label>Dia do vencimento (todo mês)</label><input id="lembrete-dia" type="number" min="1" max="31" placeholder="Ex: 10"/></div>
-      <div class="app-row"><label>Categoria</label><input id="lembrete-cat" placeholder="Ex: Educação"/></div>
+      <div class="app-row" style="background:var(--surface-2);border-radius:var(--r-sm);padding:10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700">
+          <input type="checkbox" id="lembrete-fixo" style="width:16px;height:16px"/>
+          Valor fixo todo mês
+        </label>
+        <p class="small muted" style="margin:4px 0 0 24px">Marque se o valor não muda. Desmarque para valor variável (ex: conta de luz).</p>
+      </div>
+      <div class="app-row" id="lembrete-valor-row">
+        <label id="lembrete-valor-label">Valor (R$)</label>
+        <input id="lembrete-valor" type="number" step="0.01" min="0" placeholder="0,00"/>
+      </div>
       <div class="app-actions">
         <button id="lembrete-cancel" class="muted-button">Cancelar</button>
         <button id="lembrete-save" style="background:var(--accent);color:#fff">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal confirmar pagamento lembrete -->
+  <div id="lembrete-pagar-modal-back" style="display:none;position:fixed;inset:0;background:rgba(13,31,60,0.55);z-index:900;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(3px)">
+    <div class="app-edit-modal" style="max-width:380px">
+      <h3>✅ Confirmar Pagamento</h3>
+      <input type="hidden" id="lembrete-pagar-id"/>
+      <p class="small muted" style="margin-bottom:12px">Ao confirmar, o pagamento será lançado como despesa real no sistema.</p>
+      <div class="app-row">
+        <label>Valor pago (R$)</label>
+        <input id="lembrete-pagar-valor" type="number" step="0.01" min="0" placeholder="0,00"/>
+      </div>
+      <div class="app-row">
+        <label>Data do pagamento</label>
+        <input id="lembrete-pagar-data" type="date"/>
+      </div>
+      <div class="app-row">
+        <label>Categoria (para o lançamento)</label>
+        <input id="lembrete-pagar-cat" type="text" placeholder="Ex: Educação"/>
+      </div>
+      <p class="small muted" style="margin-top:6px">A conta ficará marcada como paga este mês e não aparecerá mais como pendente.</p>
+      <div class="app-actions">
+        <button id="lembrete-pagar-cancel" class="muted-button">Cancelar</button>
+        <button id="lembrete-pagar-confirm" style="background:var(--accent);color:#fff">✅ Confirmar e Lançar</button>
       </div>
     </div>
   </div>
