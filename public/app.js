@@ -271,7 +271,7 @@ const expandEntry = (e, filterMonth = null) => {
 // ─── CALCULATIONS ─────────────────────────────────────────────────────────────
 const calcTotals = (month) => {
   const sel = month === 'all' ? null : month;
-  let realReceita = 0, fixedTotal = 0, variableTotal = 0, investTotal = 0;
+  let realReceita = 0, fixedTotal = 0, variableTotal = 0, investTotal = 0, parcelasTotal = 0;
   const byCat = {};
 
   state.entries.forEach(e => {
@@ -287,8 +287,11 @@ const calcTotals = (month) => {
       const cat        = (entry.category && String(entry.category).trim()) || '(Sem categoria)';
       const budgetInfo = getBudgetForMonth(cat, sel);
       const isFixed    = entry.fixed || (budgetInfo && budgetInfo.isFixed && budgetInfo.kind === 'expense');
+      // Is it a parcel (installment) child?
+      const isParcela  = !!(entry.seriesId);
 
       if (isFixed) { fixedTotal += val; }
+      else if (isParcela) { parcelasTotal += val; byCat[cat] = (byCat[cat] || 0) + val; }
       else { variableTotal += val; byCat[cat] = (byCat[cat] || 0) + val; }
     });
   });
@@ -312,7 +315,7 @@ const calcTotals = (month) => {
     });
   }
 
-  return { realReceita, fixedTotal, variableTotal, investTotal, byCat };
+  return { realReceita, fixedTotal, variableTotal, investTotal, parcelasTotal, byCat };
 };
 
 const calcOrcamentoTotal = (month) => {
@@ -1072,18 +1075,10 @@ const renderKPIs = () => {
   const totals = calcTotals(sel);
   const orc    = calcOrcamentoTotal(sel);
 
-  // Parcelas separadas
-  let parcelasTotal = 0;
-  state.entries.forEach(e => {
-    if(!isValidEntry(e)||!e.seriesId) return;
-    const comp=e.competence||yyyyMmFromDate(e.date);
-    if(sel&&comp!==sel) return;
-    if(!sel) return;
-    parcelasTotal+=Number(e.value||0);
-  });
-
-  const totalGasto = totals.variableTotal + totals.fixedTotal + totals.investTotal;
-  const saldoLivre = totals.realReceita - totalGasto;
+  // Total = Fixas + Variáveis + Parcelas + Invest (4 categorias independentes)
+  const parcelasTotal = totals.parcelasTotal || 0;
+  const totalGasto    = totals.fixedTotal + totals.variableTotal + parcelasTotal + totals.investTotal;
+  const saldoLivre    = totals.realReceita - totalGasto;
 
   if (el('k-variable'))        el('k-variable').textContent        = formatMoney(totals.variableTotal);
   if (el('k-fixed'))           el('k-fixed').textContent           = formatMoney(totals.fixedTotal);
@@ -1362,7 +1357,8 @@ const updateGlobalProgressBar = () => {
   const sel    = selectedFilterMonth !== 'all' ? selectedFilterMonth : null;
   const totals = calcTotals(sel);
   const orc    = calcOrcamentoTotal(sel);
-  const numerator   = totals.variableTotal + totals.fixedTotal + totals.investTotal;
+  const parcelasForBar = totals.parcelasTotal || 0;
+  const numerator   = totals.variableTotal + totals.fixedTotal + parcelasForBar + totals.investTotal;
   const denominator = orc.total;
   const pctReal = denominator > 0 ? Math.round((numerator / denominator) * 100) : (numerator > 0 ? 100 : 0);
   const pctBar  = Math.min(100, pctReal);
@@ -1652,7 +1648,7 @@ const renderMonthlyProjection = () => {
     const totals = calcTotals(month);
     const orc    = calcOrcamentoTotal(month);
     const entradas  = totals.realReceita;
-    const saidas    = totals.variableTotal + totals.fixedTotal + totals.investTotal;
+    const saidas    = totals.variableTotal + totals.fixedTotal + (totals.parcelasTotal||0) + totals.investTotal;
     const planejado = orc.total;
     const saldo     = entradas - saidas;
     return { month, entradas, saidas, planejado, saldo };
@@ -1907,6 +1903,19 @@ function deleteLembrete(id){
   saveLembretes(); renderLembretes();
 }
 function initLembretes(){
+  function populateLembreteCatSelect(selectedCat){
+    const sel=el('lembrete-cat-select'); if(!sel) return;
+    // Gather all known categories from budgets + entries
+    const cats=new Set();
+    Object.keys(state.budgets||{}).forEach(c=>cats.add(c));
+    state.entries.forEach(e=>{if(e&&e.category)cats.add(e.category);});
+    lembretes.forEach(l=>{if(l.cat)cats.add(l.cat);});
+    sel.innerHTML='<option value="">— Selecione —</option>'+
+      [...cats].sort().map(c=>`<option value="${escapeHtml(c)}"${c===selectedCat?' selected':''}>${escapeHtml(c)}</option>`).join('');
+    // Wire: selecting from dropdown fills text input
+    sel.onchange=()=>{ const inp=el('lembrete-cat'); if(inp&&sel.value) inp.value=sel.value; };
+  }
+
   function openLembreteModal(id){
     const modal=el('lembrete-modal-back'); if(!modal) return;
     if(id){
@@ -1918,12 +1927,14 @@ function initLembretes(){
       el('lembrete-dia').value=l.dia||'';
       el('lembrete-valor').value=l.valor||'';
       if(el('lembrete-fixo')) el('lembrete-fixo').checked=!!l.fixo;
+      populateLembreteCatSelect(l.cat||'');
     } else {
       el('lembrete-modal-title').textContent='Nova Conta a Pagar';
       el('lembrete-edit-id').value='';
       ['lembrete-desc','lembrete-cat'].forEach(i=>{const e=el(i);if(e)e.value='';});
       ['lembrete-valor','lembrete-dia'].forEach(i=>{const e=el(i);if(e)e.value='';});
       if(el('lembrete-fixo')) el('lembrete-fixo').checked=false;
+      populateLembreteCatSelect('');
     }
     modal.style.display='flex';
   }
@@ -1971,58 +1982,86 @@ function renderOrcamentoNovo(){
   const sel=selectedFilterMonth!=='all'?selectedFilterMonth:null;
   const totals=calcTotals(sel);
   const orc=calcOrcamentoTotal(sel);
-  const totalGasto=totals.variableTotal+totals.fixedTotal+totals.investTotal;
-  const saldoLivre=orc.total-totalGasto;
-  const receita=totals.realReceita;
+  const parcelas=totals.parcelasTotal||0;
+  const totalGasto=totals.fixedTotal+totals.variableTotal+parcelas+totals.investTotal;
+  const saldoLivre=totals.realReceita-totalGasto;
+  const totalPlanejado=orc.total;
+  // Lembretes pendentes no planejado
+  const now=new Date();
+  const mesAtual=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  const selMes=sel||mesAtual;
+  const lembretesPendentes=(typeof lembretes!=='undefined'?lembretes:[])
+    .filter(l=>!(l.pago?.[selMes]?.pago));
+  const totalLembretes=lembretesPendentes.reduce((s,l)=>s+(l.valor||0),0);
+  const totalPlanejadoTotal=totalPlanejado+totalLembretes;
+  const pctGasto=totalPlanejadoTotal>0?Math.min(120,Math.round((totalGasto/totalPlanejadoTotal)*100)):0;
+  let barColor='#10b981';
+  if(pctGasto>100) barColor='var(--danger)';
+  else if(pctGasto>80) barColor='var(--warning)';
 
+  // ── Bloco hero: Receita e Planejado em destaque ──
   const fluxoEl=el('orc-fluxo-resumo');
   if(fluxoEl){
-    const pct=orc.total>0?Math.min(100,Math.round((totalGasto/orc.total)*100)):0;
-    let barColor='#10b981';
-    if(pct>100) barColor='var(--danger)';
-    else if(pct>80) barColor='var(--warning)';
-    fluxoEl.innerHTML=`<div class="orc-resumo-bar-card">
-      <div class="orc-resumo-row">
-        <div class="orc-resumo-item"><div class="orc-resumo-label">💰 Receita</div><div class="orc-resumo-val orc-val-income">${formatMoney(receita)}</div></div>
-        <div class="orc-resumo-arrow">→</div>
-        <div class="orc-resumo-item"><div class="orc-resumo-label">📊 Total Gasto</div><div class="orc-resumo-val orc-val-expense">${formatMoney(totalGasto)}</div></div>
-        <div class="orc-resumo-arrow">→</div>
-        <div class="orc-resumo-item"><div class="orc-resumo-label">🎯 Saldo Livre</div><div class="orc-resumo-val" style="color:${saldoLivre>=0?'var(--accent)':'var(--danger)'}">${formatMoney(saldoLivre)}</div></div>
-      </div>
-      <div style="margin-top:12px">
-        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-          <span class="small muted">Orçamento utilizado</span>
-          <span class="small" style="font-weight:700;color:${barColor}">${pct}%</span>
+    fluxoEl.innerHTML=`
+    <div class="orc-hero-card">
+      <div class="orc-hero-2col">
+        <div class="orc-hero-item orc-hero-receita">
+          <div class="orc-hero-label">💵 Receita do Mês</div>
+          <div class="orc-hero-value">${formatMoney(totals.realReceita)}</div>
         </div>
-        <div style="background:var(--border);border-radius:6px;height:8px;overflow:hidden">
-          <div style="height:100%;width:${pct}%;background:${barColor};border-radius:6px;transition:width 0.4s"></div>
+        <div class="orc-hero-item orc-hero-planejado">
+          <div class="orc-hero-label">🎯 Total Planejado</div>
+          <div class="orc-hero-value">${formatMoney(totalPlanejadoTotal)}</div>
+          ${totalLembretes>0?`<div class="orc-hero-sub">inclui ${formatMoney(totalLembretes)} em contas pendentes</div>`:''}
+        </div>
+      </div>
+      <div class="orc-hero-bar-wrap">
+        <div style="display:flex;justify-content:space-between;margin-bottom:5px">
+          <span class="small" style="font-weight:700">Gasto até agora: ${formatMoney(totalGasto)}</span>
+          <span class="small" style="font-weight:800;color:${barColor}">${pctGasto}%</span>
+        </div>
+        <div class="orc-hero-bar-track">
+          <div class="orc-hero-bar-fill" style="width:${Math.min(100,pctGasto)}%;background:${barColor}"></div>
         </div>
         <div style="display:flex;justify-content:space-between;margin-top:4px">
-          <span class="small muted">Gasto: ${formatMoney(totalGasto)}</span>
-          <span class="small muted">Planejado: ${formatMoney(orc.total)}</span>
+          <span class="small muted">Saldo livre: <strong style="color:${saldoLivre>=0?'var(--accent)':'var(--danger)'}">${formatMoney(saldoLivre)}</strong></span>
+          <span class="small muted">Receita − Total Gasto</span>
         </div>
+      </div>
+      <div class="orc-breakdown-row">
+        <div class="orc-breakdown-item"><span class="orc-bd-dot" style="background:var(--warning)"></span><span class="orc-bd-label">Fixas</span><span class="orc-bd-val">${formatMoney(totals.fixedTotal)}</span></div>
+        <div class="orc-breakdown-sep">+</div>
+        <div class="orc-breakdown-item"><span class="orc-bd-dot" style="background:var(--danger)"></span><span class="orc-bd-label">Variáveis</span><span class="orc-bd-val">${formatMoney(totals.variableTotal)}</span></div>
+        <div class="orc-breakdown-sep">+</div>
+        <div class="orc-breakdown-item"><span class="orc-bd-dot" style="background:#6366f1"></span><span class="orc-bd-label">Parcelas</span><span class="orc-bd-val">${formatMoney(parcelas)}</span></div>
+        <div class="orc-breakdown-sep">+</div>
+        <div class="orc-breakdown-item"><span class="orc-bd-dot" style="background:var(--invest)"></span><span class="orc-bd-label">Invest.</span><span class="orc-bd-val">${formatMoney(totals.investTotal)}</span></div>
+        <div class="orc-breakdown-sep">=</div>
+        <div class="orc-breakdown-item orc-breakdown-total"><span class="orc-bd-label">Total</span><span class="orc-bd-val">${formatMoney(totalGasto)}</span></div>
       </div>
     </div>`;
   }
 
+  // ── Contas a pagar pendentes ──
   const distEl=el('orc-dist-grid');
   if(distEl){
-    const items=[
-      {label:'Fixas',val:totals.fixedTotal,orc:orc.orcFixo,color:'var(--warning)',icon:'🔒'},
-      {label:'Variáveis',val:totals.variableTotal,orc:orc.orcVariavel,color:'var(--danger)',icon:'💸'},
-      {label:'Investimentos',val:totals.investTotal,orc:orc.orcInvest,color:'var(--invest)',icon:'💜'},
-    ];
-    distEl.innerHTML=`<div class="orc-dist-row">`+items.map(it=>{
-      const p=it.orc>0?Math.min(100,Math.round((it.val/it.orc)*100)):(it.val>0?100:0);
-      return `<div class="orc-dist-card">
-        <div class="orc-dist-icon">${it.icon}</div>
-        <div class="orc-dist-label">${it.label}</div>
-        <div class="orc-dist-val" style="color:${it.color}">${formatMoney(it.val)}</div>
-        <div class="orc-dist-orc">de ${formatMoney(it.orc)}</div>
-        <div class="orc-dist-bar-track"><div class="orc-dist-bar-fill" style="width:${p}%;background:${it.color}"></div></div>
-        <div class="orc-dist-pct" style="color:${it.color}">${p}%</div>
+    if(lembretesPendentes.length){
+      distEl.innerHTML=`<div class="orc-lembretes-preview">
+        <div class="orc-lem-title">🔔 Contas a pagar este mês</div>
+        ${lembretesPendentes.map(l=>`
+          <div class="orc-lem-row">
+            <div class="orc-lem-left">
+              <span class="orc-lem-desc">${escapeHtml(l.desc||'')}</span>
+              ${l.dia?`<span class="orc-lem-dia">vence dia ${l.dia}</span>`:''}
+            </div>
+            <span class="orc-lem-val">${l.valor>0?formatMoney(l.valor):'Variável'}</span>
+            <button class="orc-lem-pay" onclick="abrirConfirmarPagamento('${l.id}')">Pagar</button>
+          </div>`).join('')}
+        <div class="orc-lem-total">Total pendente: <strong>${formatMoney(totalLembretes)}</strong></div>
       </div>`;
-    }).join('')+`</div>`;
+    } else {
+      distEl.innerHTML='';
+    }
   }
 
   const catList=el('orc-categorias-list');
