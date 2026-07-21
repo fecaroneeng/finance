@@ -1603,9 +1603,9 @@ textarea.form-input {
   margin-bottom: 2px;
 }
 
-/* ── KPI grid 4 columns ── */
+/* ── KPI grid (agora com 5 cards: Receita, Planejado, Gasto, Saldo, A Pagar) ── */
 .dash-kpi-grid-4 {
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
 }
 @media (max-width: 767px) {
   .dash-kpi-grid-4 { grid-template-columns: repeat(2, 1fr); }
@@ -1614,6 +1614,7 @@ textarea.form-input {
   .dash-kpi-grid-4 { grid-template-columns: 1fr 1fr; }
 }
 .dash-kpi-receita { border-left: 4px solid var(--income); }
+.dash-kpi-apagar  { border-left: 4px solid var(--warning); }
 
 /* ── Progress legend colors ── */
 .prog-leg-fixas strong { color: var(--warning); }

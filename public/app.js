@@ -1087,7 +1087,20 @@ const renderKPIs = () => {
   if (el('k-total-gasto'))     el('k-total-gasto').textContent     = formatMoney(totalGasto);
   if (el('k-receita'))         el('k-receita').textContent         = formatMoney(totals.realReceita);
   if (el('k-receita-display')) el('k-receita-display').textContent = formatMoney(totals.realReceita);
-  if (el('k-orcamento-total')) el('k-orcamento-total').textContent = formatMoney(orc.total);
+
+  // Contas a pagar pendentes (lembretes ainda não confirmados neste mês) entram
+  // no Total Planejado como valor "fantasma" — já sabemos que vamos pagar,
+  // mas ainda não é gasto real (isso só acontece quando a conta é confirmada).
+  const totalAPagar    = (typeof getLembretesPendentesTotal === 'function') ? getLembretesPendentesTotal(sel) : 0;
+  const planejadoTotal = orc.total + totalAPagar;
+
+  if (el('k-orcamento-total')) el('k-orcamento-total').textContent = formatMoney(planejadoTotal);
+  if (el('k-orcamento-sub')) {
+    el('k-orcamento-sub').textContent = totalAPagar > 0
+      ? `Inclui ${formatMoney(totalAPagar)} em contas a pagar`
+      : 'Fixos + Variáveis + Invest.';
+  }
+  if (el('k-a-pagar')) el('k-a-pagar').textContent = formatMoney(totalAPagar);
   if (el('k-budget-net')) {
     el('k-budget-net').textContent = formatMoney(saldoLivre);
     el('k-budget-net').style.color = saldoLivre >= 0 ? 'var(--accent)' : 'var(--danger)';
@@ -1358,8 +1371,9 @@ const updateGlobalProgressBar = () => {
   const totals = calcTotals(sel);
   const orc    = calcOrcamentoTotal(sel);
   const parcelasForBar = totals.parcelasTotal || 0;
+  const totalAPagar = (typeof getLembretesPendentesTotal === 'function') ? getLembretesPendentesTotal(sel) : 0;
   const numerator   = totals.variableTotal + totals.fixedTotal + parcelasForBar + totals.investTotal;
-  const denominator = orc.total;
+  const denominator = orc.total + totalAPagar;
   const pctReal = denominator > 0 ? Math.round((numerator / denominator) * 100) : (numerator > 0 ? 100 : 0);
   const pctBar  = Math.min(100, pctReal);
   let color = '#10C9A0';
@@ -1732,6 +1746,19 @@ function updateDashboardParcelas(){
 const LEMBRETES_KEY = 'finance_lembretes_v1';
 let lembretes = JSON.parse(localStorage.getItem(LEMBRETES_KEY) || '[]');
 
+// ── getLembretesPendentesTotal ────────────────────────────────────────────────
+// Soma o valor de todas as contas (lembretes) ainda NÃO pagas no mês informado.
+// Usado para o KPI "A Pagar" e para somar ao Total Planejado (valor "fantasma"
+// que já sabemos que vai virar gasto, mas ainda não é gasto real).
+function getLembretesPendentesTotal(month){
+  const m = month || (typeof selectedFilterMonth !== 'undefined' && selectedFilterMonth !== 'all' ? selectedFilterMonth : new Date().toISOString().slice(0,7));
+  if (typeof lembretes === 'undefined' || !lembretes.length) return 0;
+  return lembretes
+    .filter(l => !(l.pago && l.pago[m] && l.pago[m].pago))
+    .reduce((s, l) => s + Number(l.valor || 0), 0);
+}
+window.getLembretesPendentesTotal = getLembretesPendentesTotal;
+
 function saveLembretes(){
   localStorage.setItem(LEMBRETES_KEY, JSON.stringify(lembretes));
   try {
@@ -1850,7 +1877,7 @@ function initPagarModal(){
     try {
       const desc = l.desc || 'Conta paga';
       const entry = {
-        id: uid(), type:'expense', fixed:false,
+        id: uid(), type:'expense', fixed: !!l.fixo,
         value: valor, date: data,
         competence: data.slice(0,7),
         category: cat, description: desc,
