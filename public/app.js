@@ -12,7 +12,7 @@ import {
   createUserWithEmailAndPassword, signOut
 } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-auth.js";
 import {
-  getFirestore, collection, doc, setDoc,
+  getFirestore, collection, doc, setDoc, getDoc,
   onSnapshot, deleteDoc, enableIndexedDbPersistence
 } from "https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore.js";
 
@@ -1762,23 +1762,21 @@ window.getLembretesPendentesTotal = getLembretesPendentesTotal;
 function saveLembretes(){
   localStorage.setItem(LEMBRETES_KEY, JSON.stringify(lembretes));
   try {
-    if(window.db && currentUser){
-      db.collection('users').doc(currentUser.uid).collection('lembretes')
-        .doc('list').set({ items: lembretes }, { merge: true });
+    if(currentUser){
+      setDoc(doc(db, 'users', currentUser.uid, 'lembretes', 'list'), { items: lembretes }, { merge: true });
     }
-  } catch(e){}
+  } catch(e){ console.error('saveLembretes firestore:', e); }
 }
 
 function loadLembretesFromCloud(){
-  if(!window.db || !currentUser) return;
-  db.collection('users').doc(currentUser.uid).collection('lembretes')
-    .doc('list').get().then(doc => {
-      if(doc.exists && doc.data().items){
-        lembretes = doc.data().items;
-        localStorage.setItem(LEMBRETES_KEY, JSON.stringify(lembretes));
-        renderLembretes();
-      }
-    }).catch(e => console.error('loadLembretes', e));
+  if(!currentUser) return;
+  getDoc(doc(db, 'users', currentUser.uid, 'lembretes', 'list')).then(snap => {
+    if(snap.exists() && snap.data().items){
+      lembretes = snap.data().items;
+      localStorage.setItem(LEMBRETES_KEY, JSON.stringify(lembretes));
+      renderLembretes();
+    }
+  }).catch(e => console.error('loadLembretes', e));
 }
 
 function renderLembretes(){
@@ -1821,7 +1819,12 @@ function renderLembretes(){
         </div>
       </div>
       <div class="lembrete-valor-wrap">
-        ${!pago ? `<button class="lembrete-pagar-btn" onclick="abrirConfirmarPagamento('${l.id}')">Pagar</button>` : `<span class="lembrete-check-paid">✓</span>`}
+        ${!pago
+          ? `<button class="lembrete-pagar-btn" onclick="abrirConfirmarPagamento('${l.id}')">Pagar</button>`
+          : `<span style="display:flex;align-items:center;gap:4px">
+               <span class="lembrete-check-paid">✓</span>
+               <button class="lembrete-undo-btn" onclick="cancelarPagamentoLembrete('${l.id}')" title="Desfazer pagamento">↩</button>
+             </span>`}
         <div class="lembrete-actions">
           <button class="lembrete-edit-btn" onclick="editLembrete('${l.id}')">✏️</button>
           <button class="lembrete-del-btn" onclick="deleteLembrete('${l.id}')">✕</button>
@@ -1860,20 +1863,17 @@ function initPagarModal(){
   el('lembrete-pagar-cancel')?.addEventListener('click',()=>{
     const m=el('lembrete-pagar-modal-back'); if(m) m.style.display='none';
   });
-  el('lembrete-pagar-confirm')?.addEventListener('click', async()=>{
+el('lembrete-pagar-confirm')?.addEventListener('click', async()=>{
     const id = el('lembrete-pagar-id')?.value;
     const valor = parseFloat(el('lembrete-pagar-valor')?.value)||0;
     const data = el('lembrete-pagar-data')?.value||new Date().toISOString().slice(0,10);
     const cat = (el('lembrete-pagar-cat')?.value||'').trim()||'Outros';
     const l = lembretes.find(x=>x.id===id); if(!l) return;
 
-    // Mark as paid in lembrete
     const mes = new Date().toISOString().slice(0,7);
-    if(!l.pago) l.pago={};
-    l.pago[mes] = { pago:true, valorReal:valor, dataPago:data };
-    saveLembretes();
 
-    // Create actual expense entry
+    // Cria o lançamento de despesa real primeiro (pra guardar o id no lembrete)
+    let createdEntryId = null;
     try {
       const desc = l.desc || 'Conta paga';
       const entry = {
@@ -1883,15 +1883,22 @@ function initPagarModal(){
         category: cat, description: desc,
         _fromLembrete: id, createdAt: new Date().toISOString()
       };
+      createdEntryId = entry.id;
       state.entries.push(entry);
       saveLocal();
-      if(currentUser && window.db){
-        await db.collection('users').doc(currentUser.uid).collection('entries').doc(entry.id).set(entry);
+      if(currentUser){
+        try { await setDoc(doc(db, 'users', currentUser.uid, 'entries', entry.id), entry); }
+        catch(e) { console.error('lembrete entry firestore:', e); }
       }
       dispatchEvent(new Event('app:state-changed'));
     } catch(err){ console.error('lembrete launch entry',err); }
 
-    renderLembretes();
+    // Marca como pago, guardando o id do lançamento pra poder desfazer depois
+    if(!l.pago) l.pago={};
+    l.pago[mes] = { pago:true, valorReal:valor, dataPago:data, entryId: createdEntryId };
+    saveLembretes();
+
+    renderAll();
     const m=el('lembrete-pagar-modal-back'); if(m) m.style.display='none';
 
     // Toast
@@ -1901,6 +1908,40 @@ function initPagarModal(){
     document.body.appendChild(toast); setTimeout(()=>toast.remove(),3000);
   });
 }
+
+// ── cancelarPagamentoLembrete ──────────────────────────────────────────────
+// Desfaz o pagamento de um lembrete: remove o lançamento de gasto gerado e
+// volta a conta pro status "pendente". Recalcula tudo (Fixas, Total Gasto, etc.)
+async function cancelarPagamentoLembrete(id){
+  const l = lembretes.find(x=>x.id===id); if(!l) return;
+  const mes = new Date().toISOString().slice(0,7);
+  const mesData = l.pago?.[mes];
+  if(!mesData || !mesData.pago){ alert('Esta conta não está paga neste mês.'); return; }
+  if(!confirm(`Desfazer o pagamento de "${l.desc||''}"? O lançamento será removido e a conta volta a ficar pendente.`)) return;
+
+  let entryIdToRemove = mesData.entryId;
+  if(!entryIdToRemove){
+    // fallback para pagamentos antigos que não guardaram o id do lançamento
+    const found = state.entries.find(e => e._fromLembrete === id && e.competence === mes);
+    if(found) entryIdToRemove = found.id;
+  }
+  if(entryIdToRemove){
+    const idx = state.entries.findIndex(e => e.id === entryIdToRemove);
+    if(idx !== -1){
+      state.entries.splice(idx, 1);
+      if(currentUser){
+        try { await deleteDoc(doc(db, 'users', currentUser.uid, 'entries', entryIdToRemove)); } catch(e){}
+      }
+    }
+  }
+
+  delete l.pago[mes];
+  saveLocal();
+  saveLembretes();
+  renderAll();
+  window.dispatchEvent(new Event('app:state-changed'));
+}
+window.cancelarPagamentoLembrete = cancelarPagamentoLembrete;
 
 function toggleLembretePago(id){
   // Now handled by abrirConfirmarPagamento
@@ -2148,7 +2189,10 @@ function renderOrcamentoNovo(){
       <div class="orc-cat-bar-track"><div class="orc-cat-bar-fill" style="width:${pct}%;background:${barColor}"></div></div>
       <div class="orc-cat-restante" style="color:${restante>=0?'var(--text-3)':'var(--danger)'}">
         ${restante>=0?'Disponível':'Excedido'}: ${formatMoney(Math.abs(restante))}
-        <span class="orc-cat-edit" onclick="editBudget('${cat.replace(/'/g,"\\'")}')" style="cursor:pointer">✏️ Editar</span>
+        <span>
+          <span class="orc-cat-edit" onclick="editBudget('${cat.replace(/'/g,"\\'")}')" style="cursor:pointer">✏️ Editar</span>
+          <span class="orc-cat-edit" onclick="removeBudget('${cat.replace(/'/g,"\\'")}')" style="cursor:pointer;color:var(--danger);margin-left:6px">🗑️ Excluir</span>
+        </span>
       </div>`;
     catList.appendChild(div);
   });
@@ -2741,6 +2785,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderAll();
   try { initLembretes(); } catch(e){ console.warn('initLembretes',e); }
   try { initAnalTabs(); } catch(e){ console.warn('initAnalTabs',e); }
+  try { initGastosDiarios(); } catch(e){ console.warn('initGastosDiarios',e); }
   try { if(typeof currentUser !== 'undefined' && currentUser) loadLembretesFromCloud(); } catch(e){}
 });
 
