@@ -1296,7 +1296,7 @@ textarea.form-input {
 }
 .lembrete-valor-input:focus { border-color: var(--accent); }
 .lembrete-actions { display: flex; gap: 4px; }
-.lembrete-edit-btn, .lembrete-del-btn {
+.lembrete-edit-btn, .lembrete-del-btn, .lembrete-undo-btn {
   width: 22px; height: 22px; border: none; border-radius: 4px;
   background: transparent; cursor: pointer; font-size: 0.72rem;
   display: flex; align-items: center; justify-content: center;
@@ -1304,6 +1304,8 @@ textarea.form-input {
 }
 .lembrete-edit-btn:hover { background: var(--surface-2); }
 .lembrete-del-btn:hover { background: rgba(240,72,58,0.1); }
+.lembrete-undo-btn { color: var(--text-2); font-size: 0.85rem; }
+.lembrete-undo-btn:hover { background: rgba(245,166,35,0.15); color: var(--warning); }
 
 /* Gastos recentes */
 .gasto-recente-item {
@@ -1603,9 +1605,9 @@ textarea.form-input {
   margin-bottom: 2px;
 }
 
-/* ── KPI grid (agora com 5 cards: Receita, Planejado, Gasto, Saldo, A Pagar) ── */
+/* ── KPI grid (4 cards: Receita, Planejado, Gasto, Saldo — "A Pagar" agora fica na barrinha) ── */
 .dash-kpi-grid-4 {
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(4, 1fr);
 }
 @media (max-width: 767px) {
   .dash-kpi-grid-4 { grid-template-columns: repeat(2, 1fr); }
@@ -1614,13 +1616,13 @@ textarea.form-input {
   .dash-kpi-grid-4 { grid-template-columns: 1fr 1fr; }
 }
 .dash-kpi-receita { border-left: 4px solid var(--income); }
-.dash-kpi-apagar  { border-left: 4px solid var(--warning); }
 
 /* ── Progress legend colors ── */
 .prog-leg-fixas strong { color: var(--warning); }
 .prog-leg-var strong { color: var(--danger); }
 .prog-leg-parc strong { color: #6366f1; }
 .prog-leg-inv strong { color: var(--invest); }
+.prog-leg-apagar strong { color: var(--warning); }
 
 /* ── GD (gastos diários) full styles ── */
 .gd-filters { margin-bottom:16px; padding-bottom:14px; border-bottom:1px solid var(--border); }
