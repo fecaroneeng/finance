@@ -196,27 +196,20 @@ const ensureEntryId = (e) => { if (!e.id || String(e.id).trim() === '') e.id = u
 const isValidEntry  = (e) => e && e.id && !isNaN(Number(e.value));
 
 // ─── expandEntry ─────────────────────────────────────────────────────────────
-// FIX: recurring entries now correctly appear in ALL months — past AND future —
-// when a filterMonth is provided. No longer capped at "now".
 const expandEntry = (e, filterMonth = null) => {
   if (!e) return [];
 
-  // ── Case 1: Recurring (open-ended, expands every month from start) ────────
   if (e.recurring === true && !e.seriesId && !(e.series && Number(e.series.total) > 1)) {
     const startComp = e.competence || yyyyMmFromDate(e.date);
     if (!startComp) return [];
 
     if (filterMonth) {
-      // ✅ KEY FIX: show in filterMonth as long as filterMonth >= startComp
-      // and either there's no recurringEnd or filterMonth <= recurringEnd
-      // This allows future months to correctly show recurring entries
       if (filterMonth >= startComp && (!e.recurringEnd || filterMonth <= e.recurringEnd)) {
         return [{ competence: filterMonth, value: Number(e.value || 0), entry: e }];
       }
       return [];
     }
 
-    // No filterMonth — expand up to current month for "all months" view
     const nowComp = new Date().toISOString().slice(0,7);
     const endComp = e.recurringEnd || nowComp;
     const arr = [];
@@ -231,14 +224,12 @@ const expandEntry = (e, filterMonth = null) => {
     return arr;
   }
 
-  // ── Case 2: Series child (installment) ───────────────────────────────────
   if (e.seriesIndex && e.seriesTotal) {
     const comp = e.competence || yyyyMmFromDate(e.date);
     if (filterMonth && comp !== filterMonth) return [];
     return [{ competence: comp, value: Number(e.value || 0), entry: e }];
   }
 
-  // ── Case 3: Series parent ─────────────────────────────────────────────────
   if (e.series && e.series.total && Number(e.series.total) > 1) {
     const hasChildren = state.entries.some(ch => ch && ch.seriesId === e.id);
     if (hasChildren) return [];
@@ -262,7 +253,6 @@ const expandEntry = (e, filterMonth = null) => {
     }
   }
 
-  // ── Case 4: Simple single entry ───────────────────────────────────────────
   const comp = e.competence || yyyyMmFromDate(e.date);
   if (filterMonth && comp !== filterMonth) return [];
   return [{ competence: comp, value: Number(e.value || 0), entry: e }];
@@ -287,7 +277,6 @@ const calcTotals = (month) => {
       const cat        = (entry.category && String(entry.category).trim()) || '(Sem categoria)';
       const budgetInfo = getBudgetForMonth(cat, sel);
       const isFixed    = entry.fixed || (budgetInfo && budgetInfo.isFixed && budgetInfo.kind === 'expense');
-      // Is it a parcel (installment) child?
       const isParcela  = !!(entry.seriesId);
 
       if (isFixed) { fixedTotal += val; }
@@ -310,8 +299,6 @@ const calcTotals = (month) => {
         });
         if (!hasEntry) fixedTotal += Number(b.default || b.budget || 0);
       }
-      // Receitas fixas agora usam recurring:true nas entries → expandEntry cuida de todos os meses.
-      // Não há mais fallback por budget para evitar valores fantasmas.
     });
   }
 
@@ -345,7 +332,6 @@ const getAllCategories = () => {
   return Array.from(set).sort();
 };
 
-// ── Expense categories split by fixed / variable ──────────────────────────────
 const getFixedExpenseCategories = () => {
   const set = new Set();
   Object.keys(state.budgets || {}).forEach(k => {
@@ -374,15 +360,11 @@ const getVariableExpenseCategories = () => {
   return Array.from(set).sort();
 };
 
-// ── getAllInvestmentCategories ─────────────────────────────────────────────────
-// Single source of truth: union of budget (kind=investment) + entry (type=investment) categories
 const getAllInvestmentCategories = () => {
   const set = new Set();
-  // From budgets with kind='investment'
   Object.keys(state.budgets || {}).forEach(cat => {
     if (cat && cat.trim() && state.budgets[cat]?.kind === 'investment') set.add(cat.trim());
   });
-  // From actual investment entries
   state.entries.forEach(e => {
     if (e && e.type === 'investment' && e.category && String(e.category).trim()) {
       set.add(String(e.category).trim());
@@ -391,8 +373,6 @@ const getAllInvestmentCategories = () => {
   return Array.from(set).sort((a, b) => a.localeCompare(b));
 };
 
-// ── calcInvestByCategory ──────────────────────────────────────────────────────
-// Returns invested amount for a specific investment category in a given month
 const calcInvestByCategory = (category, month) => {
   const sel = month && month !== 'all' ? month : null;
   let total = 0;
@@ -499,7 +479,11 @@ const removeBudget = async (category, month = null) => {
   const cat = String(category).trim();
   if (!cat) return;
   const targetMonth = month || (selectedFilterMonth !== 'all' ? selectedFilterMonth : null) || new Date().toISOString().slice(0,7);
-  if (!confirm(`Remover orçamento de "${cat}" do mês ${targetMonth}?`)) return;
+  const lembretesVinculados = (typeof lembretes !== 'undefined') ? lembretes.filter(l => l && l.cat === cat) : [];
+  const avisoLembretes = lembretesVinculados.length
+    ? `\n\n⚠️ Atenção: ${lembretesVinculados.length} conta(s) a pagar (${lembretesVinculados.map(l=>l.desc||'sem nome').join(', ')}) usa(m) essa categoria. Elas continuam existindo — essa categoria de orçamento fixo será recriada automaticamente na próxima vez que uma delas for salva ou paga. Pra remover de vez, edite ou exclua essas contas primeiro.`
+    : '';
+  if (!confirm(`Remover orçamento de "${cat}" do mês ${targetMonth}?${avisoLembretes}`)) return;
   if (state.monthlyHistory?.[targetMonth]?.budgets) {
     delete state.monthlyHistory[targetMonth].budgets[cat];
     if (currentUser) {
@@ -525,7 +509,6 @@ const addEntry = async () => {
   const competence   = el('input-competence').value || yyyyMmFromDate(date);
   const description  = el('input-desc').value.trim();
 
-  // ── Category resolution (same logic for all types) ────────────────────────
   const catSelectEl = el('input-category-select');
   const catTextEl   = el('input-category-text');
   const catTextVisible = catTextEl && catTextEl.style.display !== 'none';
@@ -546,15 +529,11 @@ const addEntry = async () => {
   const finalCategory = category;
   const entryId = uid();
 
-  // ── INVESTMENT ─────────────────────────────────────────────────────────────
   if (type === 'investment') {
     const isRecurring = fixedChecked;
 
-    // ✅ Auto-create / update investment budget for this category
-    // This ensures the category appears in the meta section and progress
     const existingBudget = state.budgets[finalCategory];
     if (!existingBudget || existingBudget.kind !== 'investment') {
-      // Create with value as the goal (user can edit later)
       await setBudget(finalCategory, {
         budget:  value,
         default: value,
@@ -580,10 +559,7 @@ const addEntry = async () => {
     return;
   }
 
-  // ── INCOME ─────────────────────────────────────────────────────────────────
   if (type === 'income') {
-    // FIX: receita fixa usa recurring:true (igual a investimentos recorrentes).
-    // Não cria mais budget separado — evita duplicação e valores fantasmas.
     const entry = { id: entryId, date, competence, type: 'income', category: finalCategory, description, value, fixed: fixedChecked, recurring: fixedChecked };
     state.entries.push(entry);
     if (currentUser) {
@@ -594,7 +570,6 @@ const addEntry = async () => {
     return;
   }
 
-  // ── EXPENSE ────────────────────────────────────────────────────────────────
   const isNewCategory = catTextVisible && catTextEl.value.trim() !== '';
   if (isNewCategory || (fixedChecked && finalCategory)) {
     await setBudget(finalCategory, { budget: value, default: value, isFixed: fixedChecked, kind: 'expense' });
@@ -688,7 +663,6 @@ const editEntry = (id) => {
   const isInvest   = entry.type === 'investment';
   const isParceled = !!(entry.series && Number(entry.series.total) > 1);
 
-  // ── Branch: parceled series editor ──────────────────────────────────────────
   if (isParceled) {
     const children    = state.entries.filter(e => e.seriesId === id);
     const currentTotal = Number(entry.series.total || 2);
@@ -697,7 +671,6 @@ const editEntry = (id) => {
     const overlay = document.createElement('div'); overlay.className = 'app-edit-overlay';
     const modal   = document.createElement('div'); modal.className   = 'app-edit-modal';
 
-    // Build parcel-count options
     const totalOpts = Array.from({length: 35}, (_,i) => i+2)
       .map(n => `<option value="${n}" ${n===currentTotal?'selected':''}>${n}x</option>`).join('');
     const startOpts = Array.from({length: currentTotal}, (_,i) => i+1)
@@ -725,7 +698,6 @@ const editEntry = (id) => {
 
     overlay.appendChild(modal); document.body.appendChild(overlay);
 
-    // Rebuild start-index options when total changes
     const totalSel = modal.querySelector('#ep-total');
     const startSel = modal.querySelector('#ep-start');
     totalSel.addEventListener('change', () => {
@@ -741,7 +713,6 @@ const editEntry = (id) => {
       const newTotal = Number(totalSel.value);
       const newStart = Number(startSel.value);
       const newCat   = modal.querySelector('#ep-cat').value.trim();
-      // Strip any trailing "(X/Y)" suffix left in the description field
       const descBase = modal.querySelector('#ep-desc').value.trim().replace(/ \(\d+\/\d+\)$/, '');
       const newDate  = modal.querySelector('#ep-date').value;
       const newComp  = modal.querySelector('#ep-comp').value;
@@ -751,7 +722,6 @@ const editEntry = (id) => {
       if (newTotal < 1) { alert('Total de parcelas inválido'); return; }
       if (newStart < 1 || newStart > newTotal) { alert('Parcela inicial inválida'); return; }
 
-      // ── Step 1: Remove ALL existing children ─────────────────────────────────
       const oldChildIds = children.map(c => c.id);
       state.entries = state.entries.filter(e => !oldChildIds.includes(e.id));
       if (currentUser) {
@@ -762,14 +732,12 @@ const editEntry = (id) => {
         } catch(e) {}
       }
 
-      // ── Step 2: Update root — keep description clean (no parcel suffix) ──────
-      // The root is a metadata holder; the children carry the actual per-month entries.
       const newSeries = { start: newComp, total: newTotal, startIndex: newStart, _expanded: true };
       const rootPatch = {
         date:        formatDateISO(newDate),
         competence:  newComp,
         category:    newCat,
-        description: descBase,   // ← no "(X/Y)" on root — avoids double display in table
+        description: descBase,
         value:       newValue,
         fixed:       newFixed,
         series:      newSeries
@@ -780,19 +748,15 @@ const editEntry = (id) => {
         try { await setDoc(doc(db, 'users', currentUser.uid, 'entries', id), state.entries[rootIdx]); } catch(e) {}
       }
 
-      // ── Step 3: Rebuild children — mirrors addEntry loop exactly ─────────────
-      // remaining = number of installments from newStart through newTotal (inclusive)
-      // Loop starts at i=0 → same competence month as root (the starting installment),
-      // so the child for the starting month is always created and filter-by-month works.
       const [sy, sm_] = newComp.split('-').map(Number);
-      const remaining = Math.max(0, newTotal - (newStart - 1)); // e.g. total=8, start=1 → 8 children
+      const remaining = Math.max(0, newTotal - (newStart - 1));
       const newChildren = [];
       for (let i = 0; i < remaining; i++) {
-        const monthNum = sm_ + i;                                   // starts at same month as root
+        const monthNum = sm_ + i;
         const y    = sy + Math.floor((monthNum - 1) / 12);
         const m    = ((monthNum - 1) % 12) + 1;
         const comp = `${y}-${String(m).padStart(2,'0')}`;
-        const idx  = newStart + i;                                  // starts at newStart, not newStart+1
+        const idx  = newStart + i;
         newChildren.push({
           id:          uid(),
           date:        `${y}-${String(m).padStart(2,'0')}-01`,
@@ -820,10 +784,9 @@ const editEntry = (id) => {
       window.dispatchEvent(new Event('app:state-changed'));
       overlay.remove();
     });
-    return; // end parceled branch
+    return;
   }
 
-  // ── Branch: regular entry editor ────────────────────────────────────────────
   const overlay  = document.createElement('div');
   overlay.className = 'app-edit-overlay';
   const modal = document.createElement('div');
@@ -833,7 +796,6 @@ const editEntry = (id) => {
     ? `<p class="small" style="color:var(--invest);margin-bottom:12px">🔄 Entrada recorrente — editá-la afeta todos os meses a partir de <strong>${entry.competence || yyyyMmFromDate(entry.date)}</strong></p>`
     : '';
 
-  // Build category options for investments
   const investCats = getAllInvestmentCategories();
   const defaultInvestCats = ['Renda Fixa', 'Renda Variável', 'Previdência', 'Criptomoedas', 'Outros'];
   const allInvestOpts = [...new Set([...investCats, ...defaultInvestCats])].sort();
@@ -872,7 +834,6 @@ const editEntry = (id) => {
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
 
-  // Wire up new-category toggle for investment edit
   if (isInvest) {
     const catSel = modal.querySelector('#edit-cat-select');
     const catTxt = modal.querySelector('#edit-cat-text');
@@ -906,7 +867,6 @@ const editEntry = (id) => {
     if (newType === 'investment') {
       patch.recurring = !!modal.querySelector('#edit-recurring')?.checked;
       patch.fixed = false;
-      // Auto-create budget for new/updated investment category
       if (newCat && (!state.budgets[newCat] || state.budgets[newCat].kind !== 'investment')) {
         await setBudget(newCat, { budget: patch.value, default: patch.value, isFixed: false, kind: 'investment' });
       }
@@ -915,11 +875,9 @@ const editEntry = (id) => {
       patch.recurring = (patch.fixed && patch.type === 'income') ? true : false;
     }
 
-    // ── FIX: receita/investimento recorrente alterado só a partir do mês atual ──
     const origEntry = state.entries.find(x => x.id === id);
     const isRecurringEdit = origEntry?.recurring && (origEntry?.type === 'income' || origEntry?.type === 'investment');
     if(isRecurringEdit && patch.value !== origEntry.value){
-      // Encerra o original no mês anterior ao atual
       const nowM = new Date().toISOString().slice(0,7);
       const [y,m] = nowM.split('-').map(Number);
       const prevDate = new Date(y, m-2, 1);
@@ -928,7 +886,6 @@ const editEntry = (id) => {
       if(currentUser){
         try { await setDoc(doc(db,'users',currentUser.uid,'entries',id), origEntry); } catch(e){}
       }
-      // Cria nova entrada recorrente a partir do mês atual
       const newId = uid();
       const newRec = { ...origEntry, ...patch, id: newId, competence: nowM, date: nowM+'-01', recurringEnd: null };
       state.entries.push(newRec);
@@ -947,14 +904,12 @@ const editEntry = (id) => {
 const renameBudgetCategory = async (oldCat, newCat) => {
   if (!newCat || newCat === oldCat) return;
 
-  // Copy budget data under new name in global budgets
   const budgetData = state.budgets[oldCat];
   if (budgetData) {
     state.budgets[newCat] = { ...budgetData };
     delete state.budgets[oldCat];
   }
 
-  // Copy across all monthly history
   Object.keys(state.monthlyHistory || {}).forEach(month => {
     const mb = state.monthlyHistory[month]?.budgets;
     if (mb && mb[oldCat] !== undefined) {
@@ -963,18 +918,22 @@ const renameBudgetCategory = async (oldCat, newCat) => {
     }
   });
 
-  // Update all entries that reference the old category
   state.entries.forEach(e => {
     if (e && e.category === oldCat) e.category = newCat;
   });
 
-  // Persist to Firestore
+  // Mantém as contas a pagar (lembretes) vinculadas à categoria renomeada —
+  // senão elas ficam "órfãs" e a próxima migração recria a categoria antiga.
+  if (typeof lembretes !== 'undefined' && lembretes.length) {
+    let lembretesChanged = false;
+    lembretes.forEach(l => { if (l && l.cat === oldCat) { l.cat = newCat; lembretesChanged = true; } });
+    if (lembretesChanged && typeof saveLembretes === 'function') saveLembretes();
+  }
+
   if (currentUser) {
     try {
-      // Budgets: delete old doc, create new
       await deleteDoc(doc(db, 'users', currentUser.uid, 'budgets', oldCat));
       if (budgetData) await setDoc(doc(db, 'users', currentUser.uid, 'budgets', newCat), { ...budgetData });
-      // Monthly budgets: update all affected months
       for (const month of Object.keys(state.monthlyHistory || {})) {
         const mb = state.monthlyHistory[month]?.budgets;
         if (mb) {
@@ -985,7 +944,6 @@ const renameBudgetCategory = async (oldCat, newCat) => {
           );
         }
       }
-      // Entries: update all affected
       for (const e of state.entries) {
         if (e && e.category === newCat) {
           await setDoc(doc(db, 'users', currentUser.uid, 'entries', e.id), e);
@@ -1038,7 +996,6 @@ const editBudget = (category) => {
 
     if (!newCatName) { alert('O nome da categoria não pode ficar vazio'); return; }
 
-    // Rename first (if needed), then update budget value
     if (newCatName !== cat) {
       await renameBudgetCategory(cat, newCatName);
     }
@@ -1075,7 +1032,6 @@ const renderKPIs = () => {
   const totals = calcTotals(sel);
   const orc    = calcOrcamentoTotal(sel);
 
-  // Total = Fixas + Variáveis + Parcelas + Invest (4 categorias independentes)
   const parcelasTotal = totals.parcelasTotal || 0;
   const totalGasto    = totals.fixedTotal + totals.variableTotal + parcelasTotal + totals.investTotal;
   const saldoLivre    = totals.realReceita - totalGasto;
@@ -1088,9 +1044,6 @@ const renderKPIs = () => {
   if (el('k-receita'))         el('k-receita').textContent         = formatMoney(totals.realReceita);
   if (el('k-receita-display')) el('k-receita-display').textContent = formatMoney(totals.realReceita);
 
-  // Contas a pagar pendentes (lembretes ainda não confirmados neste mês) entram
-  // no Total Planejado como valor "fantasma" — já sabemos que vamos pagar,
-  // mas ainda não é gasto real (isso só acontece quando a conta é confirmada).
   const totalAPagar    = (typeof getLembretesPendentesTotal === 'function') ? getLembretesPendentesTotal(sel) : 0;
   const planejadoTotal = orc.total + totalAPagar;
 
@@ -1110,17 +1063,12 @@ const renderKPIs = () => {
   try { renderGastosRecentes(sel); } catch(e){}
 };
 
-// ── renderVariableTable ──────────────────────────────────────────────────────
-// Shows:
-//   1. Expense variable categories
-//   2. Investment meta section: consolidated header + per-category rows
 const renderVariableTable = () => {
   const tbody = qs('#variable-table tbody');
   if (!tbody) return;
   tbody.innerHTML = '';
   const sel = selectedFilterMonth !== 'all' ? selectedFilterMonth : null;
 
-  // ── Expense variable categories ───────────────────────────────────────────
   const catSet = new Set();
   Object.keys(state.budgets || {}).forEach(cat => {
     const b = getBudgetForMonth(cat, sel);
@@ -1169,18 +1117,13 @@ const renderVariableTable = () => {
   if (el('subtotal-variable-table'))  el('subtotal-variable-table').innerHTML  = '<strong>' + formatMoney(totalSpent) + '</strong>';
   if (el('subtotal-variable-budget')) el('subtotal-variable-budget').innerHTML = '<strong>' + formatMoney(totalBudget) + '</strong>';
 
-  // ── Investment meta section ────────────────────────────────────────────────
   _renderInvestmentSection(tbody, sel);
 };
 
-// ── _renderInvestmentSection ─────────────────────────────────────────────────
-// Renders: separator → consolidated header → per-category rows
-// All driven by getAllInvestmentCategories() (single source of truth)
 const _renderInvestmentSection = (tbody, sel) => {
   const investCats = getAllInvestmentCategories();
   const totalInvested = calcTotals(sel).investTotal;
 
-  // Collect per-category data
   const catData = investCats.map(cat => {
     const b       = getBudgetForMonth(cat, sel);
     const goal    = Number(b?.budget || 0);
@@ -1188,7 +1131,6 @@ const _renderInvestmentSection = (tbody, sel) => {
     return { cat, goal, invested };
   });
 
-  // Also collect invested from entries that have no matching budget (orphan categories)
   const orphanMap = {};
   state.entries.forEach(e => {
     if (!isValidEntry(e) || e.type !== 'investment') return;
@@ -1206,7 +1148,6 @@ const _renderInvestmentSection = (tbody, sel) => {
   const totalGoal = catData.reduce((s, d) => s + d.goal, 0);
   if (catData.length === 0 && totalInvested === 0) return;
 
-  // ── Section separator ─────────────────────────────────────────────────────
   const sep = document.createElement('tr');
   sep.innerHTML = `
     <td colspan="5" style="
@@ -1222,7 +1163,6 @@ const _renderInvestmentSection = (tbody, sel) => {
     ">💜 Meta de Investimentos</td>`;
   tbody.appendChild(sep);
 
-  // ── Consolidated header row ───────────────────────────────────────────────
   const totalPct  = totalGoal > 0 ? Math.round((totalInvested / totalGoal) * 100) : (totalInvested > 0 ? 100 : 0);
   const totalBar  = Math.min(100, totalPct);
   const totalColor = totalPct >= 100 ? '#8B5CF6' : totalPct >= 70 ? '#a78bfa' : '#c4b5fd';
@@ -1260,7 +1200,6 @@ const _renderInvestmentSection = (tbody, sel) => {
   headerRow.append(thName, thSpent, thGoal, thProg, thAct);
   tbody.appendChild(headerRow);
 
-  // ── Per-category rows ─────────────────────────────────────────────────────
   catData.sort((a, b) => b.invested - a.invested).forEach(({ cat, goal, invested }) => {
     const pct   = goal > 0 ? Math.round((invested / goal) * 100) : (invested > 0 ? 100 : 0);
     const pBar  = Math.min(100, pct);
@@ -1319,8 +1258,6 @@ const _renderInvestmentSection = (tbody, sel) => {
   });
 };
 
-// ── _openSetInvestGoal ─────────────────────────────────────────────────────
-// Quick modal to set a goal for an existing investment category
 const _openSetInvestGoal = (cat) => {
   const sel = selectedFilterMonth !== 'all' ? selectedFilterMonth : new Date().toISOString().slice(0,7);
   const overlay = document.createElement('div');
@@ -1386,8 +1323,6 @@ const updateGlobalProgressBar = () => {
   barEl.textContent      = pctReal + '%';
 };
 
-// ✅ FIX: usa expandEntry para receitas recorrentes aparecerem em todos os meses corretos,
-// exatamente como renderInvestmentTable faz para investimentos recorrentes.
 const renderIncomeTable = () => {
   const tbody = qs('#incomes-table tbody');
   if (!tbody) return;
@@ -1435,8 +1370,6 @@ const renderIncomeTable = () => {
   if (el('subtotal-incomes')) el('subtotal-incomes').innerHTML = '<strong>' + formatMoney(total) + '</strong>';
 };
 
-// ── renderInvestmentTable ─────────────────────────────────────────────────────
-// ✅ FIX: uses expandEntry which now correctly handles recurring in future months
 const renderInvestmentTable = () => {
   const tbody = qs('#investments-table tbody');
   if (!tbody) return;
@@ -1494,21 +1427,18 @@ const renderParcelTable = () => {
 
   roots.forEach(root => {
     const children = state.entries.filter(e => e.seriesId === root.id);
-    // Strip any legacy "(X/Y)" suffix from root description for clean display
     const baseDesc = (root.description || '').replace(/ \(\d+\/\d+\)$/, '');
 
     let displayValue = 0;
     let parcelLabel  = '';
 
     if (sel) {
-      // ── Filtered mode: find the child whose competence matches the filter ──
-      if (children.length === 0) return; // no children yet, skip
+      if (children.length === 0) return;
       const child = children.find(c => c.competence === sel);
-      if (!child) return; // this series has no installment in the selected month
+      if (!child) return;
       displayValue = Number(child.value || 0);
       parcelLabel  = `${child.seriesIndex}/${root.series.total}`;
     } else {
-      // ── All-months mode: sum all children, show range ─────────────────────
       if (children.length > 0) {
         displayValue = children.reduce((sum, c) => sum + Number(c.value || 0), 0);
         const minIdx = Math.min(...children.map(c => Number(c.seriesIndex || 1)));
@@ -1517,7 +1447,6 @@ const renderParcelTable = () => {
           ? `${minIdx}/${root.series.total}`
           : `${minIdx}–${maxIdx}/${root.series.total}`;
       } else {
-        // Root only (no children yet)
         displayValue = Number(root.value || 0);
         parcelLabel  = `${root.series.startIndex || 1}/${root.series.total}`;
       }
@@ -1615,7 +1544,6 @@ const renderAllEntriesTable = () => {
       const hasChildren = state.entries.some(ch => ch && ch.seriesId === e.id);
       if (hasChildren) return;
     }
-    // ✅ expandEntry handles recurring correctly for any filterMonth
     expandEntry(e, sel).forEach(inst => {
       displayRows.push({ entry: e, competence: inst.competence, value: inst.value });
     });
@@ -1717,7 +1645,6 @@ const renderAll = () => {
     renderBudgetTable();
     renderAllEntriesTable();
     renderMonthlyProjection();
-    // Novos renderizadores
     try { renderOrcamentoNovo(); } catch(e) { console.warn('renderOrcamentoNovo',e); }
     try { renderLembretes(); } catch(e) {}
     try { renderGastosRecentes(selectedFilterMonth !== 'all' ? selectedFilterMonth : null); } catch(e) {}
@@ -1727,7 +1654,6 @@ const renderAll = () => {
   } catch(e) { console.error('renderAll:', e); }
 };
 
-// Atualiza total de parcelas no KPI do dashboard
 function updateDashboardParcelas(){
   const sel = selectedFilterMonth !== 'all' ? selectedFilterMonth : null;
   let totalParcelas = 0;
@@ -1746,10 +1672,6 @@ function updateDashboardParcelas(){
 const LEMBRETES_KEY = 'finance_lembretes_v1';
 let lembretes = JSON.parse(localStorage.getItem(LEMBRETES_KEY) || '[]');
 
-// ── getLembretesPendentesTotal ────────────────────────────────────────────────
-// Soma o valor de todas as contas (lembretes) ainda NÃO pagas no mês informado.
-// Usado para o KPI "A Pagar" e para somar ao Total Planejado (valor "fantasma"
-// que já sabemos que vai virar gasto, mas ainda não é gasto real).
 function getLembretesPendentesTotal(month){
   const m = month || (typeof selectedFilterMonth !== 'undefined' && selectedFilterMonth !== 'all' ? selectedFilterMonth : new Date().toISOString().slice(0,7));
   if (typeof lembretes === 'undefined' || !lembretes.length) return 0;
@@ -1905,6 +1827,16 @@ function abrirConfirmarPagamento(id){
   if(dataInp) dataInp.value = new Date().toISOString().slice(0,10);
   const catInp = el('lembrete-pagar-cat');
   if(catInp) catInp.value = l.cat||'';
+  const hintEl = el('lembrete-pagar-hint');
+  if(hintEl){
+    if(l.fixo){
+      hintEl.textContent = '';
+    } else {
+      hintEl.textContent = `💡 Essa conta tem valor variável — confira e ajuste o valor deste mês antes de confirmar${l.valor>0?` (valor de referência: ${formatMoney(l.valor)})`:''}.`;
+      hintEl.style.color = 'var(--warning)';
+      hintEl.style.fontWeight = '600';
+    }
+  }
   modal.style.display = 'flex';
 }
 window.abrirConfirmarPagamento = abrirConfirmarPagamento;
@@ -1919,10 +1851,10 @@ el('lembrete-pagar-confirm')?.addEventListener('click', async()=>{
     const data = el('lembrete-pagar-data')?.value||new Date().toISOString().slice(0,10);
     const cat = (el('lembrete-pagar-cat')?.value||'').trim()||'Outros';
     const l = lembretes.find(x=>x.id===id); if(!l) return;
+    if (!valor || valor <= 0) { alert('Informe o valor pago antes de confirmar.'); return; }
 
     const mes = new Date().toISOString().slice(0,7);
 
-    // Cria o lançamento de despesa real primeiro (pra guardar o id no lembrete)
     let createdEntryId = null;
     try {
       const desc = l.desc || 'Conta paga';
@@ -1943,7 +1875,6 @@ el('lembrete-pagar-confirm')?.addEventListener('click', async()=>{
       dispatchEvent(new Event('app:state-changed'));
     } catch(err){ console.error('lembrete launch entry',err); }
 
-    // Marca como pago, guardando o id do lançamento pra poder desfazer depois
     if(!l.pago) l.pago={};
     l.pago[mes] = { pago:true, valorReal:valor, dataPago:data, entryId: createdEntryId };
     saveLembretes();
@@ -1951,7 +1882,6 @@ el('lembrete-pagar-confirm')?.addEventListener('click', async()=>{
     renderAll();
     const m=el('lembrete-pagar-modal-back'); if(m) m.style.display='none';
 
-    // Toast
     const toast=document.createElement('div');
     toast.textContent=`✅ Pagamento de ${formatMoney(valor)} lançado!`;
     toast.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#012b29;color:#fff;padding:12px 24px;border-radius:10px;font-weight:700;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,0.3)';
@@ -1959,9 +1889,6 @@ el('lembrete-pagar-confirm')?.addEventListener('click', async()=>{
   });
 }
 
-// ── cancelarPagamentoLembrete ──────────────────────────────────────────────
-// Desfaz o pagamento de um lembrete: remove o lançamento de gasto gerado e
-// volta a conta pro status "pendente". Recalcula tudo (Fixas, Total Gasto, etc.)
 async function cancelarPagamentoLembrete(id){
   const l = lembretes.find(x=>x.id===id); if(!l) return;
   const mes = new Date().toISOString().slice(0,7);
@@ -1971,7 +1898,6 @@ async function cancelarPagamentoLembrete(id){
 
   let entryIdToRemove = mesData.entryId;
   if(!entryIdToRemove){
-    // fallback para pagamentos antigos que não guardaram o id do lançamento
     const found = state.entries.find(e => e._fromLembrete === id && e.competence === mes);
     if(found) entryIdToRemove = found.id;
   }
@@ -1994,7 +1920,6 @@ async function cancelarPagamentoLembrete(id){
 window.cancelarPagamentoLembrete = cancelarPagamentoLembrete;
 
 function toggleLembretePago(id){
-  // Now handled by abrirConfirmarPagamento
   abrirConfirmarPagamento(id);
 }
 function updateLembreteValorMes(id,val){
@@ -2023,14 +1948,12 @@ function deleteLembrete(id){
 function initLembretes(){
   function populateLembreteCatSelect(selectedCat){
     const sel=el('lembrete-cat-select'); if(!sel) return;
-    // Gather all known categories from budgets + entries
     const cats=new Set();
     Object.keys(state.budgets||{}).forEach(c=>cats.add(c));
     state.entries.forEach(e=>{if(e&&e.category)cats.add(e.category);});
     lembretes.forEach(l=>{if(l.cat)cats.add(l.cat);});
     sel.innerHTML='<option value="">— Selecione —</option>'+
       [...cats].sort().map(c=>`<option value="${escapeHtml(c)}"${c===selectedCat?' selected':''}>${escapeHtml(c)}</option>`).join('');
-    // Wire: selecting from dropdown fills text input
     sel.onchange=()=>{ const inp=el('lembrete-cat'); if(inp&&sel.value) inp.value=sel.value; };
   }
 
@@ -2060,7 +1983,6 @@ function initLembretes(){
   el('btn-add-lembrete')?.addEventListener('click',()=>openLembreteModal(null));
   el('lembrete-cancel')?.addEventListener('click',()=>{ const m=el('lembrete-modal-back');if(m)m.style.display='none'; });
 
-  // Toggle valor label based on fixo
   el('lembrete-fixo')?.addEventListener('change', e=>{
     const lbl=el('lembrete-valor-label');
     if(lbl) lbl.textContent=e.target.checked?'Valor fixo (R$)':'Valor estimado (R$) — pode mudar ao pagar';
@@ -2106,7 +2028,6 @@ function renderOrcamentoNovo(){
   const totalGasto=totals.fixedTotal+totals.variableTotal+parcelas+totals.investTotal;
   const saldoLivre=totals.realReceita-totalGasto;
   const totalPlanejado=orc.total;
-  // Lembretes pendentes no planejado
   const now=new Date();
   const mesAtual=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
   const selMes=sel||mesAtual;
@@ -2123,7 +2044,6 @@ function renderOrcamentoNovo(){
   if(pctGasto>100) barColor='var(--danger)';
   else if(pctGasto>80) barColor='var(--warning)';
 
-  // ── Bloco hero: Receita e Planejado em destaque ──
   const fluxoEl=el('orc-fluxo-resumo');
   if(fluxoEl){
     fluxoEl.innerHTML=`
@@ -2166,7 +2086,6 @@ function renderOrcamentoNovo(){
     </div>`;
   }
 
-  // ── Contas a pagar pendentes ──
   const distEl=el('orc-dist-grid');
   if(distEl){
     if(lembretesPendentes.length){
@@ -2368,10 +2287,8 @@ function renderAnalProjecao(){
     </div>`;
   }).join('');
   if(projecaoParcelas){
-    // Only show series that still have future installments
     const roots=state.entries.filter(e=>{
       if(!e||!e.series||!(Number(e.series.total)>1)) return false;
-      // Check if there are children still in the future
       const children=state.entries.filter(c=>c.seriesId===e.id);
       const hasMore=children.some(c=>{
         const d=new Date((c.competence||'2000-01')+'-01');
@@ -2459,7 +2376,6 @@ function renderGastosDiarios(){
     if(gdCatFilter&&(e.category||'')!==gdCatFilter) return;
     rows.push({entry:e,date:d,value:Number(e.value||0)});
   });
-  // Populate cat filter
   const catFilter=el('gd-filter-cat');
   if(catFilter){
     const cats=[...new Set(rows.map(r=>r.entry.category||'').filter(Boolean))].sort();
@@ -2528,7 +2444,6 @@ const clearForm = () => {
   if (pg) pg.classList.remove('visible');
 };
 
-// ── populateCategorySelect: for expenses ──────────────────────────────────────
 const populateCategorySelect = () => {
   const sel = el('input-category-select');
   if (!sel) return;
@@ -2536,7 +2451,6 @@ const populateCategorySelect = () => {
   if (type === 'investment') { populateInvestmentCategorySelect(); return; }
   if (type === 'income') { sel.innerHTML = '<option value="">-- sem categoria --</option>'; return; }
 
-  // Filter categories by whether it's a fixed or variable expense
   const isFixed = el('input-fixed')?.checked;
   const cats = isFixed ? getFixedExpenseCategories() : getVariableExpenseCategories();
 
@@ -2547,9 +2461,6 @@ const populateCategorySelect = () => {
   const newOpt = document.createElement('option'); newOpt.value = '__new__'; newOpt.textContent = '➕ Nova categoria'; sel.appendChild(newOpt);
 };
 
-// ── populateInvestmentCategorySelect ─────────────────────────────────────────
-// Dynamically built from single source of truth (getAllInvestmentCategories)
-// plus sensible defaults if the list is still empty
 const populateInvestmentCategorySelect = () => {
   const sel = el('input-category-select');
   if (!sel) return;
@@ -2563,8 +2474,6 @@ const populateInvestmentCategorySelect = () => {
   const newOpt = document.createElement('option'); newOpt.value = '__new__'; newOpt.textContent = '➕ Nova categoria'; sel.appendChild(newOpt);
 };
 
-// ── toggleCategoryField ───────────────────────────────────────────────────────
-// Investments now use the same dynamic category mechanism as expenses
 const toggleCategoryField = () => {
   const type      = el('input-type').value;
   const fixedLbl  = document.getElementById('fixed-check-label');
@@ -2575,7 +2484,6 @@ const toggleCategoryField = () => {
   if (type === 'investment') {
     el('input-category-select').disabled = false;
     populateInvestmentCategorySelect();
-    // Only hide text field if currently showing — let __new__ option toggle it
     if (el('input-category-select').value !== '__new__') {
       if (newCatRow) newCatRow.style.display = 'none';
       if (catText)   catText.style.display = 'none';
@@ -2607,8 +2515,6 @@ const updateParcelOptions = () => {
   for (let i = 1; i <= total; i++) { const opt = document.createElement('option'); opt.value = i; opt.textContent = String(i); current.appendChild(opt); }
 };
 
-// ── openNewCategoryModal ──────────────────────────────────────────────────────
-// Supports both expense and investment categories
 const openNewCategoryModal = () => {
   const overlay = document.createElement('div'); overlay.className = 'app-edit-overlay';
   const modal   = document.createElement('div'); modal.className   = 'app-edit-modal';
@@ -2644,8 +2550,6 @@ const openNewCategoryModal = () => {
   });
 };
 
-// ── openNewInvestmentCategoryModal ────────────────────────────────────────────
-// Shortcut modal specifically for investment meta creation
 const openNewInvestmentCategoryModal = () => {
   const overlay = document.createElement('div'); overlay.className = 'app-edit-overlay';
   const modal   = document.createElement('div'); modal.className   = 'app-edit-modal';
@@ -2756,7 +2660,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Type pills wiring (new sheet design)
   document.querySelectorAll('.sheet-type-pill').forEach(pill => {
     pill.addEventListener('click', () => {
       document.querySelectorAll('.sheet-type-pill').forEach(p => p.classList.remove('active'));
@@ -2765,7 +2668,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const inp = el('input-type');
       if (inp) inp.value = t;
       toggleCategoryField();
-      // Show/hide fixed toggle based on type
       const fixedChip = el('chip-fixed');
       const parceledChip = el('chip-parceled');
       if (t === 'income') {
@@ -2778,7 +2680,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if(fixedChip) fixedChip.style.display = 'flex';
         if(parceledChip) parceledChip.style.display = 'flex';
       }
-      // Update pill color
       const colors = { expense:'var(--danger)', income:'var(--income)', investment:'var(--invest)' };
       document.querySelector('.sheet-valor-prefix').style.color = colors[t]||'var(--accent)';
     });
