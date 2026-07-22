@@ -286,9 +286,16 @@ const calcTotals = (month) => {
   });
 
   if (sel) {
+    const lembretesArr = (typeof lembretes !== 'undefined') ? lembretes : [];
+    const lembreteCats = new Set(lembretesArr.filter(l => l && l.fixo && l.cat).map(l => String(l.cat).trim()));
     Object.keys(state.budgets || {}).forEach(cat => {
       const b = getBudgetForMonth(cat, sel);
       if (!b || !b.isFixed) return;
+      // Categorias vinculadas a Contas Mensais (lembretes) só entram no Total
+      // Gasto quando de fato pagas (isso já acontece pelo lançamento real
+      // criado na hora do pagamento) — não usa o "fantasma" aqui, senão conta
+      // como gasto algo que ainda nem foi pago.
+      if (lembreteCats.has(String(cat).trim())) return;
       if (b.kind === 'expense') {
         const hasEntry = state.entries.some(e => {
           if (!isValidEntry(e) || e.type !== 'expense') return false;
@@ -308,11 +315,23 @@ const calcTotals = (month) => {
 const calcOrcamentoTotal = (month) => {
   const sel = month && month !== 'all' ? month : null;
   let orcVariavel = 0, orcFixo = 0, orcInvest = 0;
+  // Contas Mensais (lembretes recorrentes) — cada uma soma seu próprio valor de
+  // referência, mesmo que várias dividam a mesma categoria (ex: "Assinatura"
+  // com iFood + Claude). Isso evita o problema de categoria só guardar 1 valor.
+  const lembretesArr = (typeof lembretes !== 'undefined') ? lembretes : [];
+  orcFixo += lembretesArr.filter(l => l && l.fixo).reduce((s, l) => s + Number(l.valor || 0), 0);
+  const lembreteCats = new Set(lembretesArr.filter(l => l && l.fixo && l.cat).map(l => String(l.cat).trim()));
   Object.keys(state.budgets || {}).forEach(cat => {
     const b = getBudgetForMonth(cat, sel);
     if (!b || b.kind === 'income') return;
     if (b.kind === 'investment') { orcInvest += Number(b.budget || 0); }
-    else if (b.isFixed)          { orcFixo += Number(b.default || b.budget || 0); }
+    else if (b.isFixed)          {
+      // Categorias fixas "legadas" (criadas direto em Orçamentos, sem conta a
+      // pagar vinculada) continuam contando normalmente aqui. Categorias que
+      // já têm uma conta mensal com o mesmo nome são ignoradas pra não somar
+      // em dobro — o valor delas já entrou acima, direto da conta a pagar.
+      if (!lembreteCats.has(String(cat).trim())) orcFixo += Number(b.default || b.budget || 0);
+    }
     else                         { orcVariavel += Number(b.budget || 0); }
   });
   return { orcVariavel, orcFixo, orcInvest, total: orcVariavel + orcFixo + orcInvest };
@@ -1051,7 +1070,7 @@ const renderKPIs = () => {
   if (el('k-orcamento-sub')) {
     el('k-orcamento-sub').textContent = totalAPagar > 0
       ? `Inclui ${formatMoney(totalAPagar)} em contas a pagar`
-      : 'Fixos + Variáveis + Invest.';
+      : 'Fixos + Dia a Dia + Invest.';
   }
   if (el('k-a-pagar')) el('k-a-pagar').textContent = formatMoney(totalAPagar);
   if (el('k-budget-net')) {
@@ -1474,28 +1493,28 @@ const renderFixedTable = () => {
   const tbody = qs('#fixed-list-table tbody');
   if (!tbody) return;
   tbody.innerHTML = '';
-  const sel = selectedFilterMonth !== 'all' ? selectedFilterMonth : null;
-  const catSet = new Set([
-    ...Object.keys(state.budgets || {}),
-    ...(sel && state.monthlyHistory?.[sel]?.budgets ? Object.keys(state.monthlyHistory[sel].budgets) : [])
-  ]);
-  const fixedCats = Array.from(catSet).filter(cat => {
-    const b = getBudgetForMonth(cat, sel);
-    return b && b.isFixed && b.kind === 'expense';
-  }).sort();
-  if (fixedCats.length === 0) { tbody.innerHTML = '<tr><td colspan="3" class="muted">Nenhuma conta fixa neste mês</td></tr>'; return; }
+  const mesRef = selectedFilterMonth !== 'all' ? selectedFilterMonth : new Date().toISOString().slice(0,7);
+  const recorrentes = (typeof lembretes !== 'undefined' ? lembretes : []).filter(l => l && l.fixo);
+  if (recorrentes.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="muted">Nenhuma conta mensal ainda. Marque "Conta mensal recorrente" ao criar uma conta em "Contas a Pagar", na tela inicial.</td></tr>';
+    if (el('subtotal-fixed-list')) el('subtotal-fixed-list').innerHTML = '<strong>' + formatMoney(0) + '</strong>';
+    const fixedMonthEl0 = el('fixed-active-month');
+    if (fixedMonthEl0) fixedMonthEl0.textContent = mesRef;
+    return;
+  }
+  const sorted = [...recorrentes].sort((a,b) => (a.desc||'').localeCompare(b.desc||''));
   let total = 0;
-  fixedCats.forEach(cat => {
-    const b   = getBudgetForMonth(cat, sel);
-    const val = Number(b.default || b.budget || 0);
+  sorted.forEach(l => {
+    const mesData = l.pago?.[mesRef];
+    const val = (mesData && mesData.pago && mesData.valorReal != null) ? Number(mesData.valorReal) : Number(l.valor || 0);
     total += val;
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${escapeHtml(cat)}</td><td class="right">${formatMoney(val)}</td><td class="right"><button class="btn-ghost" style="background:#334155" onclick="editBudget('${cat.replace(/'/g,"\'")}')">Editar</button><button class="btn-ghost" style="background:#ef4444;margin-left:4px" onclick="removeBudget('${cat.replace(/'/g,"\'")}')">Remover</button></td>`;
+    tr.innerHTML = `<td>${escapeHtml(l.desc||'—')}</td><td>${l.cat ? escapeHtml(l.cat) : '<span class="muted">—</span>'}</td><td class="right">${formatMoney(val)}</td><td class="right"><button class="btn-ghost" style="background:#334155" onclick="editLembrete('${l.id}')">Editar</button><button class="btn-ghost" style="background:#ef4444;margin-left:4px" onclick="deleteLembrete('${l.id}')">Excluir</button></td>`;
     tbody.appendChild(tr);
   });
   if (el('subtotal-fixed-list')) el('subtotal-fixed-list').innerHTML = '<strong>' + formatMoney(total) + '</strong>';
   const fixedMonthEl = el('fixed-active-month');
-  if (fixedMonthEl) fixedMonthEl.textContent = sel || 'todos';
+  if (fixedMonthEl) fixedMonthEl.textContent = mesRef;
 };
 
 const renderBudgetTable = () => {
@@ -1513,7 +1532,7 @@ const renderBudgetTable = () => {
   }).sort();
   const monthLabelEl = el('budget-active-month');
   if (monthLabelEl) monthLabelEl.textContent = sel || 'todos';
-  if (cats.length === 0) { tbody.innerHTML = '<tr><td colspan="3" class="muted">Nenhum orçamento variável neste mês</td></tr>'; return; }
+  if (cats.length === 0) { tbody.innerHTML = '<tr><td colspan="3" class="muted">Nenhum orçamento do dia a dia neste mês</td></tr>'; return; }
   let total = 0;
   cats.forEach(cat => {
     const b           = getBudgetForMonth(cat, sel);
@@ -1677,16 +1696,10 @@ function getLembretesPendentesTotal(month){
   if (typeof lembretes === 'undefined' || !lembretes.length) return 0;
   return lembretes
     .filter(l => !(l.pago && l.pago[m] && l.pago[m].pago))
-    .filter(l => {
-      // Lembretes cuja categoria já está vinculada a um orçamento fixo
-      // (ver vincularOrcamentoFixoLembrete) já entram permanentemente no
-      // Total Planejado através dessa categoria — não soma aqui de novo,
-      // senão o valor conta em dobro.
-      const c = String(l.cat||'').trim();
-      if(!c) return true;
-      const b = state.budgets?.[c];
-      return !(b && b.kind === 'expense' && b.isFixed);
-    })
+    // Contas mensais recorrentes (l.fixo) já entram permanentemente no Total
+    // Planejado via calcOrcamentoTotal — não soma aqui de novo. Só contas
+    // avulsas (não recorrentes) aparecem como "A Pagar" extra.
+    .filter(l => !l.fixo)
     .reduce((s, l) => s + Number(l.valor || 0), 0);
 }
 window.getLembretesPendentesTotal = getLembretesPendentesTotal;
@@ -1830,11 +1843,13 @@ function abrirConfirmarPagamento(id){
   const hintEl = el('lembrete-pagar-hint');
   if(hintEl){
     if(l.fixo){
-      hintEl.textContent = '';
+      hintEl.textContent = `🔁 Conta mensal recorrente — o valor pode variar mês a mês, ajuste se precisar${l.valor>0?` (valor de referência: ${formatMoney(l.valor)})`:''}.`;
+      hintEl.style.color = 'var(--text-2)';
+      hintEl.style.fontWeight = '500';
     } else {
-      hintEl.textContent = `💡 Essa conta tem valor variável — confira e ajuste o valor deste mês antes de confirmar${l.valor>0?` (valor de referência: ${formatMoney(l.valor)})`:''}.`;
-      hintEl.style.color = 'var(--warning)';
-      hintEl.style.fontWeight = '600';
+      hintEl.textContent = '☝️ Conta avulsa — não vai se repetir todo mês.';
+      hintEl.style.color = 'var(--text-2)';
+      hintEl.style.fontWeight = '500';
     }
   }
   modal.style.display = 'flex';
@@ -1983,11 +1998,6 @@ function initLembretes(){
   el('btn-add-lembrete')?.addEventListener('click',()=>openLembreteModal(null));
   el('lembrete-cancel')?.addEventListener('click',()=>{ const m=el('lembrete-modal-back');if(m)m.style.display='none'; });
 
-  el('lembrete-fixo')?.addEventListener('change', e=>{
-    const lbl=el('lembrete-valor-label');
-    if(lbl) lbl.textContent=e.target.checked?'Valor fixo (R$)':'Valor estimado (R$) — pode mudar ao pagar';
-  });
-
   el('lembrete-save')?.addEventListener('click', async ()=>{
     const id=el('lembrete-edit-id')?.value;
     const desc=(el('lembrete-desc')?.value||'').trim();
@@ -2003,7 +2013,6 @@ function initLembretes(){
       lembretes.push({id:'l'+Date.now(),desc,cat,dia,fixo,valor,pago:{}});
     }
     saveLembretes();
-    if(cat) await vincularOrcamentoFixoLembrete(cat, valor);
     renderAll();
     el('lembrete-modal-back').style.display='none';
   });
@@ -2012,7 +2021,6 @@ function initLembretes(){
 
   initPagarModal();
   renderLembretes();
-  migrarLembretesParaOrcamento().then(()=>renderAll()).catch(e=>console.warn('migrarLembretesParaOrcamento',e));
 }
 window.toggleLembretePago=toggleLembretePago;
 window.updateLembreteValorMes=updateLembreteValorMes;
@@ -2033,11 +2041,13 @@ function renderOrcamentoNovo(){
   const selMes=sel||mesAtual;
   const lembretesPendentes=(typeof lembretes!=='undefined'?lembretes:[])
     .filter(l=>!(l.pago?.[selMes]?.pago));
-  // Usa getLembretesPendentesTotal (já filtra lembretes cuja categoria está
-  // vinculada a um orçamento fixo, pra não contar o valor em dobro no
-  // Total Planejado — a lista completa acima continua mostrando tudo que
-  // está pendente, só o SOMATÓRIO é que evita duplicar).
-  const totalLembretes=(typeof getLembretesPendentesTotal==='function') ? getLembretesPendentesTotal(selMes) : lembretesPendentes.reduce((s,l)=>s+(l.valor||0),0);
+  // getLembretesPendentesTotal já exclui contas mensais recorrentes (l.fixo),
+  // porque essas já entram permanentemente no Total Planejado via orc.total —
+  // sem isso o valor delas contaria em dobro aqui.
+  const totalLembretes=(typeof getLembretesPendentesTotal==='function') ? getLembretesPendentesTotal(selMes) : 0;
+  // Total bruto de tudo que está pendente (recorrente + avulso), só pra
+  // mostrar na listinha de "Contas a pagar este mês" — não usado no Planejado.
+  const totalPendenteBruto=lembretesPendentes.reduce((s,l)=>s+(l.valor||0),0);
   const totalPlanejadoTotal=totalPlanejado+totalLembretes;
   const pctGasto=totalPlanejadoTotal>0?Math.min(120,Math.round((totalGasto/totalPlanejadoTotal)*100)):0;
   let barColor='#10b981';
@@ -2075,7 +2085,7 @@ function renderOrcamentoNovo(){
       <div class="orc-breakdown-row">
         <div class="orc-breakdown-item"><span class="orc-bd-dot" style="background:var(--warning)"></span><span class="orc-bd-label">Fixas</span><span class="orc-bd-val">${formatMoney(totals.fixedTotal)}</span></div>
         <div class="orc-breakdown-sep">+</div>
-        <div class="orc-breakdown-item"><span class="orc-bd-dot" style="background:var(--danger)"></span><span class="orc-bd-label">Variáveis</span><span class="orc-bd-val">${formatMoney(totals.variableTotal)}</span></div>
+        <div class="orc-breakdown-item"><span class="orc-bd-dot" style="background:var(--danger)"></span><span class="orc-bd-label">Dia a Dia</span><span class="orc-bd-val">${formatMoney(totals.variableTotal)}</span></div>
         <div class="orc-breakdown-sep">+</div>
         <div class="orc-breakdown-item"><span class="orc-bd-dot" style="background:#6366f1"></span><span class="orc-bd-label">Parcelas</span><span class="orc-bd-val">${formatMoney(parcelas)}</span></div>
         <div class="orc-breakdown-sep">+</div>
@@ -2094,13 +2104,13 @@ function renderOrcamentoNovo(){
         ${lembretesPendentes.map(l=>`
           <div class="orc-lem-row">
             <div class="orc-lem-left">
-              <span class="orc-lem-desc">${escapeHtml(l.desc||'')}</span>
+              <span class="orc-lem-desc">${escapeHtml(l.desc||'')}${l.fixo?' <span style="font-size:0.62rem;color:var(--text-3)">(mensal)</span>':''}</span>
               ${l.dia?`<span class="orc-lem-dia">vence dia ${l.dia}</span>`:''}
             </div>
-            <span class="orc-lem-val">${l.valor>0?formatMoney(l.valor):'Variável'}</span>
+            <span class="orc-lem-val">${l.valor>0?formatMoney(l.valor):'A definir'}</span>
             <button class="orc-lem-pay" onclick="abrirConfirmarPagamento('${l.id}')">Pagar</button>
           </div>`).join('')}
-        <div class="orc-lem-total">Total pendente: <strong>${formatMoney(totalLembretes)}</strong></div>
+        <div class="orc-lem-total">Total pendente: <strong>${formatMoney(totalPendenteBruto)}</strong></div>
       </div>`;
     } else {
       distEl.innerHTML='';
@@ -2261,7 +2271,7 @@ function renderAnalCategorias(){
     const c2=el('tipoBarChart');
     if(c2&&typeof Chart!=='undefined'){
       if(window._tipoBarInst){window._tipoBarInst.destroy();window._tipoBarInst=null;}
-      window._tipoBarInst=new Chart(c2.getContext('2d'),{type:'bar',data:{labels:['Variável','Fixo','Investimento'],datasets:[{data:[totals.variableTotal,totals.fixedTotal,totals.investTotal],backgroundColor:['#F0483A','#F5A623','#8B5CF6'],borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{callback:v=>'R$'+Number(v).toLocaleString('pt-BR')}}}}});
+      window._tipoBarInst=new Chart(c2.getContext('2d'),{type:'bar',data:{labels:['Dia a Dia','Fixo','Investimento'],datasets:[{data:[totals.variableTotal,totals.fixedTotal,totals.investTotal],backgroundColor:['#F0483A','#F5A623','#8B5CF6'],borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{callback:v=>'R$'+Number(v).toLocaleString('pt-BR')}}}}});
     }
   } catch(e){ console.warn('charts',e); }
 }
@@ -2522,7 +2532,7 @@ const openNewCategoryModal = () => {
     <h3>Nova Categoria / Meta</h3>
     <div class="app-row"><label>Nome</label><input id="new-cat-name" placeholder="Ex: Criptomoedas"></div>
     <div class="app-row"><label>Tipo</label><select id="new-cat-kind">
-      <option value="expense">Despesa variável</option>
+      <option value="expense">Despesa do dia a dia</option>
       <option value="investment">Meta de Investimentos 💜</option>
     </select></div>
     <div class="app-row"><label>Valor / Meta (R$)</label><input id="new-cat-budget" value="0"></div>
