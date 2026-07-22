@@ -1755,9 +1755,59 @@ function getLembretesPendentesTotal(month){
   if (typeof lembretes === 'undefined' || !lembretes.length) return 0;
   return lembretes
     .filter(l => !(l.pago && l.pago[m] && l.pago[m].pago))
+    .filter(l => {
+      // Lembretes cuja categoria já está vinculada a um orçamento fixo
+      // (ver vincularOrcamentoFixoLembrete) já entram permanentemente no
+      // Total Planejado através dessa categoria — não soma aqui de novo,
+      // senão o valor conta em dobro.
+      const c = String(l.cat||'').trim();
+      if(!c) return true;
+      const b = state.budgets?.[c];
+      return !(b && b.kind === 'expense' && b.isFixed);
+    })
     .reduce((s, l) => s + Number(l.valor || 0), 0);
 }
 window.getLembretesPendentesTotal = getLembretesPendentesTotal;
+
+// ── vincularOrcamentoFixoLembrete ──────────────────────────────────────────
+// Garante que uma conta a pagar (lembrete) recorrente tenha uma categoria de
+// orçamento "fixa" correspondente, pra ela aparecer em Contas Mensais e
+// contar permanentemente no Total Planejado — sem depender de estar paga ou
+// pendente no mês atual. Só cria a categoria se ela ainda não existir; se já
+// existir como orçamento variável/investimento, NÃO sobrescreve (evita
+// corromper um orçamento que você já tinha) e avisa.
+async function vincularOrcamentoFixoLembrete(cat, valorPadrao, opts={}){
+  const c = String(cat||'').trim();
+  if(!c) return; // lembrete sem categoria: não dá pra vincular orçamento
+  const existente = state.budgets?.[c];
+  if(!existente){
+    await setBudget(c, { budget: valorPadrao, default: valorPadrao, isFixed: true, kind: 'expense' });
+    return;
+  }
+  if(existente.kind === 'expense' && existente.isFixed){
+    if(Number(existente.default||0) !== Number(valorPadrao||0)){
+      await setBudget(c, { budget: valorPadrao, default: valorPadrao, isFixed: true, kind: 'expense' });
+    }
+    return;
+  }
+  if(!opts.silent){
+    alert(`⚠️ Já existe uma categoria de orçamento "${c}" que não é uma conta mensal fixa. Pra não bagunçar seus dados, essa conta a pagar NÃO foi vinculada automaticamente ao orçamento. Se quiser que ela conte no Planejado e apareça em Contas Mensais, use um nome de categoria diferente (ex: "${c} Mensal") ou ajuste manualmente em Orçamentos.`);
+  } else {
+    console.warn(`Lembrete com categoria "${c}" não vinculada ao orçamento (categoria já existe como variável/investimento).`);
+  }
+}
+window.vincularOrcamentoFixoLembrete = vincularOrcamentoFixoLembrete;
+
+// ── migrarLembretesParaOrcamento ───────────────────────────────────────────
+// Roda uma vez ao iniciar o app: garante que toda conta a pagar recorrente já
+// cadastrada tenha uma categoria de orçamento fixa vinculada (sem alertar em
+// caso de conflito — só avisa no console, pra não incomodar a cada load).
+async function migrarLembretesParaOrcamento(){
+  for(const l of lembretes){
+    if(l.cat) await vincularOrcamentoFixoLembrete(l.cat, l.valor||0, { silent:true });
+  }
+}
+window.migrarLembretesParaOrcamento = migrarLembretesParaOrcamento;
 
 function saveLembretes(){
   localStorage.setItem(LEMBRETES_KEY, JSON.stringify(lembretes));
@@ -2016,7 +2066,7 @@ function initLembretes(){
     if(lbl) lbl.textContent=e.target.checked?'Valor fixo (R$)':'Valor estimado (R$) — pode mudar ao pagar';
   });
 
-  el('lembrete-save')?.addEventListener('click',()=>{
+  el('lembrete-save')?.addEventListener('click', async ()=>{
     const id=el('lembrete-edit-id')?.value;
     const desc=(el('lembrete-desc')?.value||'').trim();
     const cat=(el('lembrete-cat')?.value||'').trim();
@@ -2030,15 +2080,17 @@ function initLembretes(){
     } else {
       lembretes.push({id:'l'+Date.now(),desc,cat,dia,fixo,valor,pago:{}});
     }
-    saveLembretes(); renderLembretes();
+    saveLembretes();
+    if(cat) await vincularOrcamentoFixoLembrete(cat, valor);
+    renderAll();
     el('lembrete-modal-back').style.display='none';
   });
 
-  // Wire editLembrete global
   window.editLembrete = id => openLembreteModal(id);
 
   initPagarModal();
   renderLembretes();
+  migrarLembretesParaOrcamento().then(()=>renderAll()).catch(e=>console.warn('migrarLembretesParaOrcamento',e));
 }
 window.toggleLembretePago=toggleLembretePago;
 window.updateLembreteValorMes=updateLembreteValorMes;
@@ -2060,7 +2112,11 @@ function renderOrcamentoNovo(){
   const selMes=sel||mesAtual;
   const lembretesPendentes=(typeof lembretes!=='undefined'?lembretes:[])
     .filter(l=>!(l.pago?.[selMes]?.pago));
-  const totalLembretes=lembretesPendentes.reduce((s,l)=>s+(l.valor||0),0);
+  // Usa getLembretesPendentesTotal (já filtra lembretes cuja categoria está
+  // vinculada a um orçamento fixo, pra não contar o valor em dobro no
+  // Total Planejado — a lista completa acima continua mostrando tudo que
+  // está pendente, só o SOMATÓRIO é que evita duplicar).
+  const totalLembretes=(typeof getLembretesPendentesTotal==='function') ? getLembretesPendentesTotal(selMes) : lembretesPendentes.reduce((s,l)=>s+(l.valor||0),0);
   const totalPlanejadoTotal=totalPlanejado+totalLembretes;
   const pctGasto=totalPlanejadoTotal>0?Math.min(120,Math.round((totalGasto/totalPlanejadoTotal)*100)):0;
   let barColor='#10b981';
