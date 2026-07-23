@@ -61,6 +61,20 @@ const parseNumber = (s) => {
   return isNaN(n) ? 0 : n;
 };
 
+// ── splitParcelaValues ─────────────────────────────────────────────────────
+// Divide um valor TOTAL em N parcelas, exato até o centavo (distribui os
+// centavos de resto entre as primeiras parcelas). Retorna um array de
+// tamanho `count`, onde o índice 0 = parcela 1, índice 1 = parcela 2, etc.
+const splitParcelaValues = (total, count) => {
+  const c = Math.max(1, Number(count) || 1);
+  const cents = Math.round(Number(total || 0) * 100);
+  const base = Math.floor(cents / c);
+  const remainder = cents - base * c;
+  const values = [];
+  for (let i = 0; i < c; i++) values.push((base + (i < remainder ? 1 : 0)) / 100);
+  return values;
+};
+
 const formatDateISO = (d) => {
   if (!d) return new Date().toISOString().slice(0,10);
   const dt = new Date(d);
@@ -539,10 +553,17 @@ const addEntry = async () => {
   const value        = parseNumber(el('input-value').value);
   const fixedChecked = el('input-fixed').checked;
   const parceled     = el('input-parceled').checked;
+  const lembreteChecked = !!(el('input-lembrete') && el('input-lembrete').checked);
 
   if (!value || value <= 0) { alert('Valor inválido'); return; }
   if ((type === 'expense' || type === 'investment') && !category) {
     alert('Escolha ou crie uma categoria'); return;
+  }
+  if (type === 'expense' && lembreteChecked && !description) {
+    alert('Descreva o lembrete (nome da conta)'); return;
+  }
+  if (type === 'expense' && fixedChecked && parceled) {
+    alert('Conta mensal recorrente e Parcelado não podem ser marcados juntos.'); return;
   }
 
   const finalCategory = category;
@@ -589,6 +610,69 @@ const addEntry = async () => {
     return;
   }
 
+  // ── DESPESA COM LEMBRETE ──────────────────────────────────────────────────
+  // "Adicionar lembrete" marcado: não lança a despesa direto — cria uma conta
+  // a pagar (pendente), que só vira gasto de verdade quando confirmada.
+  if (type === 'expense' && lembreteChecked) {
+    const isNewCategory = catTextVisible && catTextEl.value.trim() !== '';
+    if (isNewCategory && !state.budgets[finalCategory]) {
+      // Cria a categoria como "dia a dia" (nunca fixa aqui — quem carrega a
+      // recorrência é o lembrete em si, não a categoria).
+      await setBudget(finalCategory, { budget: 0, default: 0, isFixed: false, kind: 'expense' });
+    }
+    const dia = parseInt(el('input-lembrete-dia')?.value) || null;
+
+    if (parceled) {
+      // Lembrete + Parcelado: cria a série normalmente (as parcelas contam
+      // sozinhas, mês a mês, como sempre) + um lembrete-espelho que mostra a
+      // parcela do mês em Contas a Pagar, sem duplicar valor nenhum.
+      const total   = Number(el('input-parcel-total').value) || 2;
+      const current = Number(el('input-parcel-current').value) || 1;
+      if (total <= 1) { alert('Parcelas inválidas'); return; }
+      const allValues = splitParcelaValues(value, total);
+      const rootValue = allValues[current - 1];
+      const root = {
+        id: entryId, date, competence, type: 'expense',
+        category: finalCategory, description, value: rootValue, fixed: false,
+        series: { start: competence, total, startIndex: current, _expanded: true }
+      };
+      const children = [];
+      const [sy, sm_] = competence.split('-').map(Number);
+      const remaining = Math.max(0, total - (current - 1));
+      for (let i = 0; i < remaining; i++) {
+        const month = sm_ + i;
+        const y = sy + Math.floor((month - 1) / 12);
+        const m = ((month - 1) % 12) + 1;
+        const comp = `${y}-${String(m).padStart(2,'0')}`;
+        const idx  = current + i;
+        children.push({
+          id: uid(), date: `${y}-${String(m).padStart(2,'0')}-01`,
+          competence: comp, type: 'expense', category: finalCategory,
+          description: `${description} (${idx}/${total})`,
+          value: allValues[idx - 1], fixed: false, seriesId: root.id, seriesIndex: idx, seriesTotal: total
+        });
+      }
+      state.entries.push(root, ...children);
+      if (currentUser) {
+        try {
+          await setDoc(doc(db, 'users', currentUser.uid, 'entries', root.id), root);
+          for (const ch of children) await setDoc(doc(db, 'users', currentUser.uid, 'entries', ch.id), ch);
+        } catch(e) {}
+      }
+      const lembreteObj = { id: 'l'+Date.now(), desc: description, cat: finalCategory, dia, fixo: false, valor: 0, tipo: 'parcela', seriesId: root.id, pago: {} };
+      lembretes.push(lembreteObj);
+    } else {
+      // Lembrete simples (avulso) ou Lembrete + Conta mensal recorrente
+      const lembreteObj = { id: 'l'+Date.now(), desc: description, cat: finalCategory, dia, fixo: fixedChecked, valor: value, pago: {} };
+      lembretes.push(lembreteObj);
+    }
+    saveLembretes();
+    saveLocal(); clearForm(); renderAll();
+    window.dispatchEvent(new Event('app:state-changed'));
+    return;
+  }
+
+  // ── DESPESA DIRETA (sem lembrete) — comportamento de sempre ────────────────
   const isNewCategory = catTextVisible && catTextEl.value.trim() !== '';
   if (isNewCategory || (fixedChecked && finalCategory)) {
     await setBudget(finalCategory, { budget: value, default: value, isFixed: fixedChecked, kind: 'expense' });
@@ -601,9 +685,13 @@ const addEntry = async () => {
     const total   = Number(el('input-parcel-total').value) || 2;
     const current = Number(el('input-parcel-current').value) || 1;
     if (total <= 1) { alert('Parcelas inválidas'); return; }
+    // O valor digitado é o TOTAL da compra — dividimos pelo nº de parcelas,
+    // exato até o centavo (o resto de arredondamento vai pras primeiras).
+    const allValues = splitParcelaValues(value, total);
+    const rootValue = allValues[current - 1];
     const root = {
       id: entryId, date, competence, type: 'expense',
-      category: finalCategory, description, value, fixed: fixedChecked,
+      category: finalCategory, description, value: rootValue, fixed: false,
       series: { start: competence, total, startIndex: current, _expanded: true }
     };
     const children = [];
@@ -619,7 +707,7 @@ const addEntry = async () => {
         id: uid(), date: `${y}-${String(m).padStart(2,'0')}-01`,
         competence: comp, type: 'expense', category: finalCategory,
         description: `${description} (${idx}/${total})`,
-        value, fixed: fixedChecked, seriesId: root.id, seriesIndex: idx, seriesTotal: total
+        value: allValues[idx - 1], fixed: false, seriesId: root.id, seriesIndex: idx, seriesTotal: total
       });
     }
     state.entries.push(root, ...children);
@@ -1053,7 +1141,11 @@ const renderKPIs = () => {
 
   const parcelasTotal = totals.parcelasTotal || 0;
   const totalGasto    = totals.fixedTotal + totals.variableTotal + parcelasTotal + totals.investTotal;
-  const saldoLivre    = totals.realReceita - totalGasto;
+  const totalAPagar    = (typeof getLembretesPendentesTotal === 'function') ? getLembretesPendentesTotal(sel) : 0;
+  const planejadoTotal = orc.total + totalAPagar;
+  // Saldo Livre = Total Planejado − Total Gasto (não mais Receita − Gasto,
+  // pra ficar de acordo com a lógica da planilha do Felipe).
+  const saldoLivre    = planejadoTotal - totalGasto;
 
   if (el('k-variable'))        el('k-variable').textContent        = formatMoney(totals.variableTotal);
   if (el('k-fixed'))           el('k-fixed').textContent           = formatMoney(totals.fixedTotal);
@@ -1062,9 +1154,6 @@ const renderKPIs = () => {
   if (el('k-total-gasto'))     el('k-total-gasto').textContent     = formatMoney(totalGasto);
   if (el('k-receita'))         el('k-receita').textContent         = formatMoney(totals.realReceita);
   if (el('k-receita-display')) el('k-receita-display').textContent = formatMoney(totals.realReceita);
-
-  const totalAPagar    = (typeof getLembretesPendentesTotal === 'function') ? getLembretesPendentesTotal(sel) : 0;
-  const planejadoTotal = orc.total + totalAPagar;
 
   if (el('k-orcamento-total')) el('k-orcamento-total').textContent = formatMoney(planejadoTotal);
   if (el('k-orcamento-sub')) {
@@ -1495,21 +1584,43 @@ const renderFixedTable = () => {
   tbody.innerHTML = '';
   const mesRef = selectedFilterMonth !== 'all' ? selectedFilterMonth : new Date().toISOString().slice(0,7);
   const recorrentes = (typeof lembretes !== 'undefined' ? lembretes : []).filter(l => l && l.fixo);
-  if (recorrentes.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="muted">Nenhuma conta mensal ainda. Marque "Conta mensal recorrente" ao criar uma conta em "Contas a Pagar", na tela inicial.</td></tr>';
+  const lembreteCats = new Set(recorrentes.filter(l => l.cat).map(l => String(l.cat).trim()));
+
+  // Linhas vindas de contas a pagar marcadas como "Conta mensal recorrente"
+  const rows = recorrentes.map(l => {
+    const mesData = l.pago?.[mesRef];
+    const val = (mesData && mesData.pago && mesData.valorReal != null) ? Number(mesData.valorReal) : Number(l.valor || 0);
+    return { nome: l.desc || '—', cat: l.cat || '', val, onEdit: `editLembrete('${l.id}')`, onDel: `deleteLembrete('${l.id}')` };
+  });
+
+  // Linhas vindas de categorias marcadas como fixas direto no lançamento ou em
+  // Orçamentos (sem passar por Contas a Pagar). Categorias já representadas
+  // por uma conta a pagar acima não entram de novo, pra não duplicar.
+  const catSet = new Set([
+    ...Object.keys(state.budgets || {}),
+    ...(state.monthlyHistory?.[mesRef]?.budgets ? Object.keys(state.monthlyHistory[mesRef].budgets) : [])
+  ]);
+  Array.from(catSet).sort().forEach(cat => {
+    if (lembreteCats.has(String(cat).trim())) return;
+    const b = getBudgetForMonth(cat, mesRef);
+    if (!b || !b.isFixed || b.kind !== 'expense') return;
+    rows.push({ nome: cat, cat, val: Number(b.default || b.budget || 0), onEdit: `editBudget('${cat.replace(/'/g,"\\'")}')`, onDel: `removeBudget('${cat.replace(/'/g,"\\'")}')` });
+  });
+
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="muted">Nenhuma conta mensal ainda. Marque "Conta mensal recorrente" ao lançar algo, ou em "Contas a Pagar" na tela inicial.</td></tr>';
     if (el('subtotal-fixed-list')) el('subtotal-fixed-list').innerHTML = '<strong>' + formatMoney(0) + '</strong>';
     const fixedMonthEl0 = el('fixed-active-month');
     if (fixedMonthEl0) fixedMonthEl0.textContent = mesRef;
     return;
   }
-  const sorted = [...recorrentes].sort((a,b) => (a.desc||'').localeCompare(b.desc||''));
+
+  rows.sort((a,b) => (a.nome||'').localeCompare(b.nome||''));
   let total = 0;
-  sorted.forEach(l => {
-    const mesData = l.pago?.[mesRef];
-    const val = (mesData && mesData.pago && mesData.valorReal != null) ? Number(mesData.valorReal) : Number(l.valor || 0);
-    total += val;
+  rows.forEach(r => {
+    total += r.val;
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${escapeHtml(l.desc||'—')}</td><td>${l.cat ? escapeHtml(l.cat) : '<span class="muted">—</span>'}</td><td class="right">${formatMoney(val)}</td><td class="right"><button class="btn-ghost" style="background:#334155" onclick="editLembrete('${l.id}')">Editar</button><button class="btn-ghost" style="background:#ef4444;margin-left:4px" onclick="deleteLembrete('${l.id}')">Excluir</button></td>`;
+    tr.innerHTML = `<td>${escapeHtml(r.nome)}</td><td>${r.cat ? escapeHtml(r.cat) : '<span class="muted">—</span>'}</td><td class="right">${formatMoney(r.val)}</td><td class="right"><button class="btn-ghost" style="background:#334155" onclick="${r.onEdit}">Editar</button><button class="btn-ghost" style="background:#ef4444;margin-left:4px" onclick="${r.onDel}">Excluir</button></td>`;
     tbody.appendChild(tr);
   });
   if (el('subtotal-fixed-list')) el('subtotal-fixed-list').innerHTML = '<strong>' + formatMoney(total) + '</strong>';
@@ -1700,9 +1811,25 @@ function getLembretesPendentesTotal(month){
     // Planejado via calcOrcamentoTotal — não soma aqui de novo. Só contas
     // avulsas (não recorrentes) aparecem como "A Pagar" extra.
     .filter(l => !l.fixo)
+    // Lembretes-espelho de parcelamento (tipo:'parcela') não têm valor próprio
+    // — a parcela já é contada normalmente em "Parcelas", então não soma aqui.
+    .filter(l => l.tipo !== 'parcela')
     .reduce((s, l) => s + Number(l.valor || 0), 0);
 }
 window.getLembretesPendentesTotal = getLembretesPendentesTotal;
+
+// ── getParcelaLembreteInfo ──────────────────────────────────────────────────
+// Pra lembretes-espelho de parcelamento (l.tipo === 'parcela'): busca a
+// parcela (entry filha da série) referente ao mês informado. Se não houver
+// parcela ativa naquele mês (série ainda não começou ou já terminou), retorna
+// null — o lembrete simplesmente não aparece naquele mês.
+function getParcelaLembreteInfo(l, mes){
+  if(!l || l.tipo !== 'parcela' || !l.seriesId) return null;
+  const child = state.entries.find(e => e && e.seriesId === l.seriesId && e.competence === mes);
+  if(!child) return null;
+  return { child, valor: Number(child.value||0), parcelLabel: `${child.seriesIndex}/${child.seriesTotal}` };
+}
+window.getParcelaLembreteInfo = getParcelaLembreteInfo;
 
 // ── vincularOrcamentoFixoLembrete ──────────────────────────────────────────
 // Garante que uma conta a pagar (lembrete) recorrente tenha uma categoria de
@@ -1774,7 +1901,20 @@ function renderLembretes(){
     container.innerHTML = '<div class="lembrete-empty small muted">Nenhuma conta. Clique em "+ Adicionar" para criar.</div>';
     return;
   }
-  const sorted = [...lembretes].sort((a,b) => {
+
+  // Lembretes-espelho de parcelamento (tipo:'parcela') só existem no mês se a
+  // série ainda tiver parcela ativa. Filtra fora os que não têm nada este mês.
+  const visiveis = lembretes.filter(l => {
+    if (l.tipo === 'parcela') return !!getParcelaLembreteInfo(l, mes);
+    return true;
+  });
+
+  if(!visiveis.length){
+    container.innerHTML = '<div class="lembrete-empty small muted">Nenhuma conta este mês. Clique em "+ Adicionar" para criar.</div>';
+    return;
+  }
+
+  const sorted = [...visiveis].sort((a,b) => {
     const ap = a.pago?.[mes]?.pago||false, bp = b.pago?.[mes]?.pago||false;
     if(ap!==bp) return ap?1:-1;
     return (a.dia||31)-(b.dia||31);
@@ -1784,19 +1924,25 @@ function renderLembretes(){
   const pagas     = sorted.filter(l =>  l.pago?.[mes]?.pago);
 
   function buildItem(l, pago){
+    const isParcela = l.tipo === 'parcela';
+    const parcelaInfo = isParcela ? getParcelaLembreteInfo(l, mes) : null;
     const mesData = l.pago?.[mes]||{};
-    const valorRef = mesData.valorReal!=null ? mesData.valorReal : (l.valor||0);
+    const valorRef = isParcela ? (parcelaInfo ? parcelaInfo.valor : 0) : (mesData.valorReal!=null ? mesData.valorReal : (l.valor||0));
     const diasR = (l.dia||0) - hoje;
     const vencido = diasR < 0;
     const urgente = diasR >= 0 && diasR <= 3;
     let statusClass='lembrete-pendente', statusText=l.dia?`Vence dia ${l.dia}`:'Sem vencimento';
-    if(pago)    { statusClass='lembrete-pago';    statusText=`Pago em ${mesData.dataPago||mes} · ${formatMoney(valorRef)}`; }
+    if(pago)    { statusClass='lembrete-pago';    statusText = isParcela ? `Confirmada em ${mesData.dataPago||mes}` : `Pago em ${mesData.dataPago||mes} · ${formatMoney(valorRef)}`; }
     else if(vencido){ statusClass='lembrete-vencido'; statusText=`⚠️ Vencida (dia ${l.dia})`; }
     else if(urgente){ statusClass='lembrete-urgente'; statusText=`🔥 Vence em ${diasR}d`; }
-    const valorExibido = l.fixo ? formatMoney(l.valor||0) : (valorRef>0?formatMoney(valorRef):'Valor variável');
+    const descExibida = isParcela ? `${escapeHtml(l.desc||'')} <span style="font-size:0.68rem;color:var(--text-3)">— Parcela ${parcelaInfo?parcelaInfo.parcelLabel:''}</span>` : escapeHtml(l.desc||'');
+    const badges = isParcela
+      ? ' <span style="font-size:0.62rem;color:#6366f1;background:rgba(99,102,241,0.12);padding:1px 6px;border-radius:4px;font-weight:700">📋 parcela</span>'
+      : (l.fixo ? ' <span style="font-size:0.62rem;color:var(--warning);background:rgba(245,166,35,0.12);padding:1px 6px;border-radius:4px;font-weight:700">🔁 mensal</span>' : '');
+    const valorExibido = formatMoney(valorRef);
     return `<div class="lembrete-item ${statusClass}">
       <div class="lembrete-body" style="flex:1">
-        <div class="lembrete-desc ${pago?'pago-text':''}">${escapeHtml(l.desc||'')}</div>
+        <div class="lembrete-desc ${pago?'pago-text':''}">${descExibida}${badges}</div>
         <div class="lembrete-meta">
           <span class="lembrete-status-badge">${statusText}</span>
           ${l.cat?`<span class="lembrete-cat">${escapeHtml(l.cat)}</span>`:''}
@@ -1805,7 +1951,7 @@ function renderLembretes(){
       </div>
       <div class="lembrete-valor-wrap">
         ${!pago
-          ? `<button class="lembrete-pagar-btn" onclick="abrirConfirmarPagamento('${l.id}')">Pagar</button>`
+          ? `<button class="lembrete-pagar-btn" onclick="abrirConfirmarPagamento('${l.id}')">${isParcela?'Marcar paga':'Pagar'}</button>`
           : `<span style="display:flex;align-items:center;gap:4px">
                <span class="lembrete-check-paid">✓</span>
                <button class="lembrete-undo-btn" onclick="cancelarPagamentoLembrete('${l.id}')" title="Desfazer pagamento">↩</button>
@@ -1834,20 +1980,54 @@ function abrirConfirmarPagamento(id){
   const l = lembretes.find(x=>x.id===id); if(!l) return;
   const modal = el('lembrete-pagar-modal-back'); if(!modal) return;
   el('lembrete-pagar-id').value = id;
-  const valorInp = el('lembrete-pagar-valor');
-  if(valorInp) valorInp.value = l.valor>0 ? l.valor.toFixed(2) : '';
-  const dataInp = el('lembrete-pagar-data');
-  if(dataInp) dataInp.value = new Date().toISOString().slice(0,10);
-  const catInp = el('lembrete-pagar-cat');
-  if(catInp) catInp.value = l.cat||'';
+  const tipoInp = el('lembrete-pagar-tipo');
+  const isParcela = l.tipo === 'parcela';
+  if (tipoInp) tipoInp.value = isParcela ? 'parcela' : '';
+
+  const valorRow = el('lembrete-pagar-valor-row');
+  const dataRow  = el('lembrete-pagar-data-row');
+  const catRow   = el('lembrete-pagar-cat-row');
+  const titleEl  = el('lembrete-pagar-title');
+  const introEl  = el('lembrete-pagar-intro');
+  const footerEl = el('lembrete-pagar-footer');
+  const confirmBtn = el('lembrete-pagar-confirm');
   const hintEl = el('lembrete-pagar-hint');
-  if(hintEl){
-    if(l.fixo){
-      hintEl.textContent = `🔁 Conta mensal recorrente — o valor pode variar mês a mês, ajuste se precisar${l.valor>0?` (valor de referência: ${formatMoney(l.valor)})`:''}.`;
+
+  if (isParcela) {
+    const mes = new Date().toISOString().slice(0,7);
+    const info = getParcelaLembreteInfo(l, mes);
+    if (valorRow) valorRow.style.display = 'none';
+    if (dataRow)  dataRow.style.display  = 'none';
+    if (catRow)   catRow.style.display   = 'none';
+    if (titleEl)  titleEl.textContent = '✅ Marcar Parcela como Paga';
+    if (introEl)  introEl.textContent = 'Essa parcela já está contabilizada automaticamente em "Parcelas" — aqui é só pra você lembrar que precisa efetivamente pagar/transferir o valor.';
+    if (footerEl) footerEl.textContent = 'A conta ficará marcada como paga este mês e não aparecerá mais como pendente.';
+    if (confirmBtn) confirmBtn.textContent = '✅ Marcar como Paga';
+    if (hintEl) {
+      hintEl.textContent = info ? `📋 Parcela ${info.parcelLabel} — ${formatMoney(info.valor)}` : '';
       hintEl.style.color = 'var(--text-2)';
-      hintEl.style.fontWeight = '500';
-    } else {
-      hintEl.textContent = '☝️ Conta avulsa — não vai se repetir todo mês.';
+      hintEl.style.fontWeight = '600';
+    }
+  } else {
+    if (valorRow) valorRow.style.display = '';
+    if (dataRow)  dataRow.style.display  = '';
+    if (catRow)   catRow.style.display   = '';
+    if (titleEl)  titleEl.textContent = '✅ Confirmar Pagamento';
+    if (introEl)  introEl.textContent = 'Ao confirmar, o pagamento será lançado como despesa real no sistema.';
+    if (footerEl) footerEl.textContent = 'A conta ficará marcada como paga este mês e não aparecerá mais como pendente.';
+    if (confirmBtn) confirmBtn.textContent = '✅ Confirmar e Lançar';
+    const valorInp = el('lembrete-pagar-valor');
+    if(valorInp) valorInp.value = l.valor>0 ? l.valor.toFixed(2) : '';
+    const dataInp = el('lembrete-pagar-data');
+    if(dataInp) dataInp.value = new Date().toISOString().slice(0,10);
+    const catInp = el('lembrete-pagar-cat');
+    if(catInp) catInp.value = l.cat||'';
+    if(hintEl){
+      if(l.fixo){
+        hintEl.textContent = `🔁 Conta mensal recorrente — o valor pode variar mês a mês, ajuste se precisar${l.valor>0?` (valor de referência: ${formatMoney(l.valor)})`:''}.`;
+      } else {
+        hintEl.textContent = '☝️ Conta avulsa — não vai se repetir todo mês.';
+      }
       hintEl.style.color = 'var(--text-2)';
       hintEl.style.fontWeight = '500';
     }
@@ -1862,13 +2042,29 @@ function initPagarModal(){
   });
 el('lembrete-pagar-confirm')?.addEventListener('click', async()=>{
     const id = el('lembrete-pagar-id')?.value;
+    const tipo = el('lembrete-pagar-tipo')?.value;
+    const l = lembretes.find(x=>x.id===id); if(!l) return;
+    const mes = new Date().toISOString().slice(0,7);
+
+    // ── Lembrete-espelho de parcela: só marca como "confirmada" — a parcela
+    // em si já está contabilizada normalmente, não cria lançamento nenhum. ──
+    if (tipo === 'parcela' || l.tipo === 'parcela') {
+      if(!l.pago) l.pago={};
+      l.pago[mes] = { pago:true, dataPago: new Date().toISOString().slice(0,10) };
+      saveLembretes();
+      renderAll();
+      const m=el('lembrete-pagar-modal-back'); if(m) m.style.display='none';
+      const toast=document.createElement('div');
+      toast.textContent='✅ Parcela marcada como paga!';
+      toast.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#012b29;color:#fff;padding:12px 24px;border-radius:10px;font-weight:700;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,0.3)';
+      document.body.appendChild(toast); setTimeout(()=>toast.remove(),3000);
+      return;
+    }
+
     const valor = parseFloat(el('lembrete-pagar-valor')?.value)||0;
     const data = el('lembrete-pagar-data')?.value||new Date().toISOString().slice(0,10);
     const cat = (el('lembrete-pagar-cat')?.value||'').trim()||'Outros';
-    const l = lembretes.find(x=>x.id===id); if(!l) return;
     if (!valor || valor <= 0) { alert('Informe o valor pago antes de confirmar.'); return; }
-
-    const mes = new Date().toISOString().slice(0,7);
 
     let createdEntryId = null;
     try {
@@ -1909,6 +2105,17 @@ async function cancelarPagamentoLembrete(id){
   const mes = new Date().toISOString().slice(0,7);
   const mesData = l.pago?.[mes];
   if(!mesData || !mesData.pago){ alert('Esta conta não está paga neste mês.'); return; }
+
+  // Lembrete-espelho de parcela: nunca criou lançamento nenhum, então só
+  // desfaz a marcação — não mexe em state.entries de jeito nenhum.
+  if (l.tipo === 'parcela') {
+    if(!confirm(`Desfazer a confirmação de "${l.desc||''}"? Ela volta a aparecer como pendente (a parcela em si continua contando normal em Parcelas).`)) return;
+    delete l.pago[mes];
+    saveLembretes();
+    renderAll();
+    return;
+  }
+
   if(!confirm(`Desfazer o pagamento de "${l.desc||''}"? O lançamento será removido e a conta volta a ficar pendente.`)) return;
 
   let entryIdToRemove = mesData.entryId;
@@ -1956,9 +2163,13 @@ function editLembrete(id){
   modal.style.display='flex';
 }
 function deleteLembrete(id){
-  if(!confirm('Excluir este lembrete?')) return;
+  const l=lembretes.find(x=>x.id===id);
+  const msg = (l && l.tipo==='parcela')
+    ? 'Excluir este lembrete de parcela? Ele só remove o lembrete — as parcelas continuam normalmente na tabela de Parcelas.'
+    : 'Excluir este lembrete?';
+  if(!confirm(msg)) return;
   lembretes=lembretes.filter(x=>x.id!==id);
-  saveLembretes(); renderLembretes();
+  saveLembretes(); renderAll();
 }
 function initLembretes(){
   function populateLembreteCatSelect(selectedCat){
@@ -1974,15 +2185,22 @@ function initLembretes(){
 
   function openLembreteModal(id){
     const modal=el('lembrete-modal-back'); if(!modal) return;
+    const fixoRow = el('lembrete-fixo-row');
+    const valorRow = el('lembrete-valor-row');
+    const parcelaNote = el('lembrete-parcela-note');
     if(id){
       const l=lembretes.find(x=>x.id===id); if(!l) return;
-      el('lembrete-modal-title').textContent='Editar Conta';
+      const isParcela = l.tipo === 'parcela';
+      el('lembrete-modal-title').textContent = isParcela ? 'Editar Lembrete de Parcela' : 'Editar Conta';
       el('lembrete-edit-id').value=id;
       el('lembrete-desc').value=l.desc||'';
       el('lembrete-cat').value=l.cat||'';
       el('lembrete-dia').value=l.dia||'';
       el('lembrete-valor').value=l.valor||'';
       if(el('lembrete-fixo')) el('lembrete-fixo').checked=!!l.fixo;
+      if (fixoRow) fixoRow.style.display = isParcela ? 'none' : '';
+      if (valorRow) valorRow.style.display = isParcela ? 'none' : '';
+      if (parcelaNote) parcelaNote.style.display = isParcela ? 'block' : 'none';
       populateLembreteCatSelect(l.cat||'');
     } else {
       el('lembrete-modal-title').textContent='Nova Conta a Pagar';
@@ -1990,6 +2208,9 @@ function initLembretes(){
       ['lembrete-desc','lembrete-cat'].forEach(i=>{const e=el(i);if(e)e.value='';});
       ['lembrete-valor','lembrete-dia'].forEach(i=>{const e=el(i);if(e)e.value='';});
       if(el('lembrete-fixo')) el('lembrete-fixo').checked=false;
+      if (fixoRow) fixoRow.style.display = '';
+      if (valorRow) valorRow.style.display = '';
+      if (parcelaNote) parcelaNote.style.display = 'none';
       populateLembreteCatSelect('');
     }
     modal.style.display='flex';
@@ -2008,7 +2229,12 @@ function initLembretes(){
     if(!desc){alert('Descreva a conta');return;}
     if(id){
       const l=lembretes.find(x=>x.id===id);
-      if(l){l.desc=desc;l.cat=cat;l.dia=dia;l.fixo=fixo;l.valor=valor;}
+      if(l){
+        l.desc=desc; l.cat=cat; l.dia=dia;
+        // Lembrete-espelho de parcela: nome/categoria/dia são editáveis, mas
+        // valor e "recorrente" continuam sempre ligados à série de parcelas.
+        if (l.tipo !== 'parcela') { l.fixo=fixo; l.valor=valor; }
+      }
     } else {
       lembretes.push({id:'l'+Date.now(),desc,cat,dia,fixo,valor,pago:{}});
     }
@@ -2034,13 +2260,13 @@ function renderOrcamentoNovo(){
   const orc=calcOrcamentoTotal(sel);
   const parcelas=totals.parcelasTotal||0;
   const totalGasto=totals.fixedTotal+totals.variableTotal+parcelas+totals.investTotal;
-  const saldoLivre=totals.realReceita-totalGasto;
   const totalPlanejado=orc.total;
   const now=new Date();
   const mesAtual=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
   const selMes=sel||mesAtual;
   const lembretesPendentes=(typeof lembretes!=='undefined'?lembretes:[])
-    .filter(l=>!(l.pago?.[selMes]?.pago));
+    .filter(l=>!(l.pago?.[selMes]?.pago))
+    .filter(l=> l.tipo!=='parcela' || !!getParcelaLembreteInfo(l, selMes));
   // getLembretesPendentesTotal já exclui contas mensais recorrentes (l.fixo),
   // porque essas já entram permanentemente no Total Planejado via orc.total —
   // sem isso o valor delas contaria em dobro aqui.
@@ -2049,6 +2275,8 @@ function renderOrcamentoNovo(){
   // mostrar na listinha de "Contas a pagar este mês" — não usado no Planejado.
   const totalPendenteBruto=lembretesPendentes.reduce((s,l)=>s+(l.valor||0),0);
   const totalPlanejadoTotal=totalPlanejado+totalLembretes;
+  // Saldo livre = Total Planejado − Total Gasto (igual à planilha)
+  const saldoLivre=totalPlanejadoTotal-totalGasto;
   const pctGasto=totalPlanejadoTotal>0?Math.min(120,Math.round((totalGasto/totalPlanejadoTotal)*100)):0;
   let barColor='#10b981';
   if(pctGasto>100) barColor='var(--danger)';
@@ -2079,7 +2307,7 @@ function renderOrcamentoNovo(){
         </div>
         <div style="display:flex;justify-content:space-between;margin-top:4px">
           <span class="small muted">Saldo livre: <strong style="color:${saldoLivre>=0?'var(--accent)':'var(--danger)'}">${formatMoney(saldoLivre)}</strong></span>
-          <span class="small muted">Receita − Total Gasto</span>
+          <span class="small muted">Planejado − Total Gasto</span>
         </div>
       </div>
       <div class="orc-breakdown-row">
@@ -2101,15 +2329,20 @@ function renderOrcamentoNovo(){
     if(lembretesPendentes.length){
       distEl.innerHTML=`<div class="orc-lembretes-preview">
         <div class="orc-lem-title">🔔 Contas a pagar este mês</div>
-        ${lembretesPendentes.map(l=>`
+        ${lembretesPendentes.map(l=>{
+          const isParcela = l.tipo==='parcela';
+          const pInfo = isParcela ? getParcelaLembreteInfo(l, selMes) : null;
+          const valExibido = isParcela ? (pInfo?formatMoney(pInfo.valor):'—') : (l.valor>0?formatMoney(l.valor):'A definir');
+          const tagExtra = isParcela ? ` <span style="font-size:0.62rem;color:#6366f1">(parcela ${pInfo?pInfo.parcelLabel:''})</span>` : (l.fixo?' <span style="font-size:0.62rem;color:var(--text-3)">(mensal)</span>':'');
+          return `
           <div class="orc-lem-row">
             <div class="orc-lem-left">
-              <span class="orc-lem-desc">${escapeHtml(l.desc||'')}${l.fixo?' <span style="font-size:0.62rem;color:var(--text-3)">(mensal)</span>':''}</span>
+              <span class="orc-lem-desc">${escapeHtml(l.desc||'')}${tagExtra}</span>
               ${l.dia?`<span class="orc-lem-dia">vence dia ${l.dia}</span>`:''}
             </div>
-            <span class="orc-lem-val">${l.valor>0?formatMoney(l.valor):'A definir'}</span>
-            <button class="orc-lem-pay" onclick="abrirConfirmarPagamento('${l.id}')">Pagar</button>
-          </div>`).join('')}
+            <span class="orc-lem-val">${valExibido}</span>
+            <button class="orc-lem-pay" onclick="abrirConfirmarPagamento('${l.id}')">${isParcela?'Marcar':'Pagar'}</button>
+          </div>`;}).join('')}
         <div class="orc-lem-total">Total pendente: <strong>${formatMoney(totalPendenteBruto)}</strong></div>
       </div>`;
     } else {
@@ -2450,8 +2683,22 @@ const clearForm = () => {
   el('input-category-text').value   = '';
   el('input-fixed').checked    = false;
   el('input-parceled').checked = false;
+  if (el('input-lembrete')) el('input-lembrete').checked = false;
+  if (el('input-lembrete-dia')) el('input-lembrete-dia').value = '';
   const pg = document.getElementById('parcel-group');
   if (pg) pg.classList.remove('visible');
+  const lg = document.getElementById('lembrete-group');
+  if (lg) lg.classList.remove('visible');
+  const parcelSub = document.getElementById('parcel-sublabel');
+  if (parcelSub) parcelSub.style.display = 'none';
+  const lembreteSub = document.getElementById('lembrete-sublabel');
+  if (lembreteSub) lembreteSub.style.display = 'none';
+  const parcelHint = document.getElementById('parcel-value-hint');
+  if (parcelHint) parcelHint.style.display = 'none';
+  const dateRow = document.getElementById('date-row');
+  const compRow = document.getElementById('comp-row');
+  if (dateRow) dateRow.style.display = '';
+  if (compRow) compRow.style.display = '';
 };
 
 const populateCategorySelect = () => {
@@ -2498,21 +2745,23 @@ const toggleCategoryField = () => {
       if (newCatRow) newCatRow.style.display = 'none';
       if (catText)   catText.style.display = 'none';
     }
-    if (fixedLbl) fixedLbl.textContent = 'Recorrente (aporte mensal automático)';
+    if (fixedLbl) fixedLbl.textContent = '🔁 Recorrente (aporte mensal automático)';
     if (fixedSub) fixedSub.style.display = 'none';
     return;
   }
 
-  if (fixedLbl) fixedLbl.textContent = 'Custo fixo mensal';
-  if (fixedSub) fixedSub.style.display = type === 'expense' ? '' : 'none';
-
   if (type === 'income') {
+    if (fixedLbl) fixedLbl.textContent = '🔁 Receita recorrente';
+    if (fixedSub) fixedSub.style.display = 'none';
     el('input-category-select').disabled = false;
     el('input-category-select').innerHTML = '<option value="">-- sem categoria --</option>';
     if (newCatRow) newCatRow.style.display = 'none';
     if (catText)   catText.style.display = 'none';
     return;
   }
+
+  if (fixedLbl) fixedLbl.textContent = '🔁 Conta mensal recorrente';
+  if (fixedSub) fixedSub.style.display = '';
 
   el('input-category-select').disabled = false;
   populateCategorySelect();
@@ -2678,17 +2927,21 @@ document.addEventListener('DOMContentLoaded', () => {
       const inp = el('input-type');
       if (inp) inp.value = t;
       toggleCategoryField();
-      const fixedChip = el('chip-fixed');
+      const fixedChip    = el('chip-fixed');
       const parceledChip = el('chip-parceled');
-      if (t === 'income') {
+      const lembreteChip = el('chip-lembrete');
+      if (t === 'income' || t === 'investment') {
         if(fixedChip) fixedChip.style.display = 'flex';
         if(parceledChip) parceledChip.style.display = 'none';
-      } else if (t === 'investment') {
-        if(fixedChip) fixedChip.style.display = 'flex';
-        if(parceledChip) parceledChip.style.display = 'none';
+        if(lembreteChip) lembreteChip.style.display = 'none';
+        // Parcelado e Lembrete só existem para despesa — limpa se estava marcado
+        const parcInp = el('input-parceled'), lembInp = el('input-lembrete');
+        if (parcInp && parcInp.checked) { parcInp.checked = false; parcInp.dispatchEvent(new Event('change')); }
+        if (lembInp && lembInp.checked) { lembInp.checked = false; lembInp.dispatchEvent(new Event('change')); }
       } else {
         if(fixedChip) fixedChip.style.display = 'flex';
         if(parceledChip) parceledChip.style.display = 'flex';
+        if(lembreteChip) lembreteChip.style.display = 'flex';
       }
       const colors = { expense:'var(--danger)', income:'var(--income)', investment:'var(--invest)' };
       document.querySelector('.sheet-valor-prefix').style.color = colors[t]||'var(--accent)';

@@ -109,7 +109,7 @@
           <div class="dash-kpi-icon">✅</div>
           <div class="dash-kpi-body">
             <div class="dash-kpi-label">Saldo Livre</div>
-            <div class="dash-kpi-sub">Receita − Total Gasto</div>
+            <div class="dash-kpi-sub">Total Planejado − Total Gasto</div>
             <strong class="dash-kpi-value" id="k-budget-net">R$ 0,00</strong>
           </div>
         </div>
@@ -532,11 +532,21 @@
     </div>
     <input type="hidden" id="input-type" value="expense" />
 
+    <!-- Conta mensal recorrente — logo abaixo do tipo, como pedido -->
+    <div class="sheet-toggles" id="fixed-row" style="margin-bottom:6px">
+      <label class="sheet-toggle-chip" id="chip-fixed">
+        <input id="input-fixed" type="checkbox" />
+        <span id="fixed-check-label">🔁 Conta mensal recorrente</span>
+      </label>
+    </div>
+    <span class="form-check-sublabel" id="fixed-sublabel" style="display:none;margin-bottom:10px">Mesmo valor todo mês · ex: aluguel</span>
+
     <!-- Valor em destaque -->
     <div class="sheet-valor-block">
       <span class="sheet-valor-prefix">R$</span>
       <input id="input-value" type="text" inputmode="decimal" placeholder="0,00" class="sheet-valor-input" autocomplete="off"/>
     </div>
+    <div class="small muted" id="parcel-value-hint" style="display:none;margin-top:-14px;margin-bottom:16px"></div>
 
     <!-- Campos do formulário -->
     <div class="form-grid">
@@ -556,28 +566,29 @@
         <input id="input-desc" type="text" placeholder="Opcional — Ex: Conta de luz" class="form-input" />
       </div>
 
-      <div class="form-row">
+      <div class="form-row" id="date-row">
         <label class="form-label">Data</label>
         <input id="input-date" type="date" class="form-input" />
       </div>
 
-      <div class="form-row">
+      <div class="form-row" id="comp-row">
         <label class="form-label">Competência</label>
         <input id="input-competence" type="month" class="form-input" />
       </div>
 
-      <!-- Toggle fixo / parcelado -->
-      <div class="form-row full sheet-toggles" id="fixed-row">
-        <label class="sheet-toggle-chip" id="chip-fixed">
-          <input id="input-fixed" type="checkbox" />
-          <span id="fixed-check-label">🔒 Fixo todo mês</span>
-        </label>
+      <!-- Toggle parcelado / lembrete -->
+      <div class="form-row full sheet-toggles" id="extra-toggles-row">
         <label class="sheet-toggle-chip" id="chip-parceled">
           <input id="input-parceled" type="checkbox" />
           <span>📋 Parcelado</span>
         </label>
-        <span class="form-check-sublabel" id="fixed-sublabel" style="display:none">Mesmo valor todo mês · ex: aluguel</span>
+        <label class="sheet-toggle-chip" id="chip-lembrete">
+          <input id="input-lembrete" type="checkbox" />
+          <span>🔔 Adicionar lembrete</span>
+        </label>
       </div>
+      <span class="form-check-sublabel" id="parcel-sublabel" style="display:none">O valor acima é o total da compra — dividimos pelo número de parcelas automaticamente.</span>
+      <span class="form-check-sublabel" id="lembrete-sublabel" style="display:none">Fica pendente em "Contas a Pagar" até você confirmar o pagamento — só então vira gasto de verdade.</span>
 
       <div class="parcel-group" id="parcel-group">
         <div class="form-row">
@@ -587,6 +598,13 @@
         <div class="form-row">
           <label class="form-label">Parcela atual</label>
           <select id="input-parcel-current" class="form-select"></select>
+        </div>
+      </div>
+
+      <div class="parcel-group" id="lembrete-group" style="grid-template-columns:1fr">
+        <div class="form-row">
+          <label class="form-label">Dia de vencimento (do mês)</label>
+          <input id="input-lembrete-dia" type="number" min="1" max="31" placeholder="Ex: 10" class="form-input" />
         </div>
       </div>
 
@@ -659,10 +677,72 @@
       }
     });
 
-    /* ── Parcelas ── */
-    const parcCheck = document.getElementById('input-parceled');
-    const parcelGrp = document.getElementById('parcel-group');
-    parcCheck.addEventListener('change', () => parcCheck.checked ? parcelGrp.classList.add('visible') : parcelGrp.classList.remove('visible'));
+    /* ── Fixo (recorrente) x Parcelado x Lembrete ── */
+    const fixedCheckEl    = document.getElementById('input-fixed');
+    const parcCheck       = document.getElementById('input-parceled');
+    const lembreteCheck   = document.getElementById('input-lembrete');
+    const parcelGrp       = document.getElementById('parcel-group');
+    const lembreteGrp     = document.getElementById('lembrete-group');
+    const parcelSublabel  = document.getElementById('parcel-sublabel');
+    const lembreteSublabel= document.getElementById('lembrete-sublabel');
+    const dateRow         = document.getElementById('date-row');
+    const compRow         = document.getElementById('comp-row');
+    const valueInputEl    = document.getElementById('input-value');
+    const parcelTotalSel  = document.getElementById('input-parcel-total');
+    const parcelHint      = document.getElementById('parcel-value-hint');
+
+    function updateParcelHint() {
+      if (!parcCheck.checked) { parcelHint.style.display = 'none'; return; }
+      const raw = (valueInputEl.value || '').trim();
+      let s = raw.replace(/[^\d,.-]/g, '');
+      if (s.indexOf(',') > -1 && s.indexOf('.') > -1) s = s.replace(/\./g, '').replace(',', '.');
+      else s = s.replace(',', '.');
+      const val = parseFloat(s);
+      const total = Number(parcelTotalSel.value) || 0;
+      if (!val || !total) { parcelHint.style.display = 'none'; return; }
+      const per = val / total;
+      parcelHint.textContent = `= ${total}x de R$ ${per.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+      parcelHint.style.display = 'block';
+    }
+
+    function toggleDateCompVisibility() {
+      const hide = lembreteCheck.checked && !parcCheck.checked;
+      if (dateRow) dateRow.style.display = hide ? 'none' : '';
+      if (compRow) compRow.style.display = hide ? 'none' : '';
+    }
+
+    parcCheck.addEventListener('change', () => {
+      if (parcCheck.checked) {
+        parcelGrp.classList.add('visible');
+        if (parcelSublabel) parcelSublabel.style.display = 'block';
+        if (fixedCheckEl.checked) { fixedCheckEl.checked = false; } // parcelado e recorrente não combinam
+      } else {
+        parcelGrp.classList.remove('visible');
+        if (parcelSublabel) parcelSublabel.style.display = 'none';
+      }
+      updateParcelHint();
+      toggleDateCompVisibility();
+    });
+
+    fixedCheckEl.addEventListener('change', () => {
+      if (fixedCheckEl.checked && parcCheck.checked) {
+        parcCheck.checked = false;
+        parcelGrp.classList.remove('visible');
+        if (parcelSublabel) parcelSublabel.style.display = 'none';
+        updateParcelHint();
+      }
+    });
+
+    if (lembreteCheck) {
+      lembreteCheck.addEventListener('change', () => {
+        lembreteGrp.classList.toggle('visible', lembreteCheck.checked);
+        if (lembreteSublabel) lembreteSublabel.style.display = lembreteCheck.checked ? 'block' : 'none';
+        toggleDateCompVisibility();
+      });
+    }
+
+    valueInputEl.addEventListener('input', updateParcelHint);
+    parcelTotalSel.addEventListener('change', updateParcelHint);
 
     /* ── Tab sync (mobile + desktop) ── */
     function activateTarget(target) {
@@ -714,8 +794,9 @@
         <input id="lembrete-cat" placeholder="Ou digite uma nova categoria" style="margin-top:4px"/>
         <span class="small muted" style="margin-top:2px">Selecione acima ou digite uma nova abaixo</span>
       </div>
-      <div class="app-row"><label>Dia do vencimento (todo mês)</label><input id="lembrete-dia" type="number" min="1" max="31" placeholder="Ex: 10"/></div>
-      <div class="app-row" style="background:var(--surface-2);border-radius:var(--r-sm);padding:10px">
+      <div class="app-row" id="lembrete-dia-row"><label>Dia do vencimento (todo mês)</label><input id="lembrete-dia" type="number" min="1" max="31" placeholder="Ex: 10"/></div>
+      <p class="small muted" id="lembrete-parcela-note" style="display:none;margin-bottom:12px;padding:6px 10px;background:rgba(99,102,241,0.08);border-radius:6px;border-left:3px solid #6366f1">📋 Essa conta está vinculada a um parcelamento — o valor e o número da parcela vêm automaticamente da tabela de Parcelas. Aqui você só edita nome, categoria e dia de vencimento.</p>
+      <div class="app-row" id="lembrete-fixo-row" style="background:var(--surface-2);border-radius:var(--r-sm);padding:10px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700">
           <input type="checkbox" id="lembrete-fixo" style="width:16px;height:16px"/>
           Conta mensal recorrente
@@ -737,23 +818,24 @@
   <!-- Modal confirmar pagamento lembrete -->
   <div id="lembrete-pagar-modal-back" style="display:none;position:fixed;inset:0;background:rgba(13,31,60,0.55);z-index:900;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(3px)">
     <div class="app-edit-modal" style="max-width:380px">
-      <h3>✅ Confirmar Pagamento</h3>
+      <h3 id="lembrete-pagar-title">✅ Confirmar Pagamento</h3>
       <input type="hidden" id="lembrete-pagar-id"/>
-      <p class="small muted" style="margin-bottom:8px">Ao confirmar, o pagamento será lançado como despesa real no sistema.</p>
+      <input type="hidden" id="lembrete-pagar-tipo"/>
+      <p class="small muted" style="margin-bottom:8px" id="lembrete-pagar-intro">Ao confirmar, o pagamento será lançado como despesa real no sistema.</p>
       <p class="small" id="lembrete-pagar-hint" style="margin-bottom:12px"></p>
-      <div class="app-row">
+      <div class="app-row" id="lembrete-pagar-valor-row">
         <label>Valor pago (R$)</label>
         <input id="lembrete-pagar-valor" type="number" step="0.01" min="0" placeholder="0,00"/>
       </div>
-      <div class="app-row">
+      <div class="app-row" id="lembrete-pagar-data-row">
         <label>Data do pagamento</label>
         <input id="lembrete-pagar-data" type="date"/>
       </div>
-      <div class="app-row">
+      <div class="app-row" id="lembrete-pagar-cat-row">
         <label>Categoria (para o lançamento)</label>
         <input id="lembrete-pagar-cat" type="text" placeholder="Ex: Educação"/>
       </div>
-      <p class="small muted" style="margin-top:6px">A conta ficará marcada como paga este mês e não aparecerá mais como pendente.</p>
+      <p class="small muted" style="margin-top:6px" id="lembrete-pagar-footer">A conta ficará marcada como paga este mês e não aparecerá mais como pendente.</p>
       <div class="app-actions">
         <button id="lembrete-pagar-cancel" class="muted-button">Cancelar</button>
         <button id="lembrete-pagar-confirm" style="background:var(--accent);color:#fff">✅ Confirmar e Lançar</button>
