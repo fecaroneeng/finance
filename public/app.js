@@ -141,10 +141,45 @@ const migrateData = async () => {
     });
     changed = true;
   }
+  // MIGRAÇÃO: categorias fixas "soltas" (isFixed:true em state.budgets, sem
+  // lembrete correspondente) — era o jeito antigo de fazer Conta Mensal.
+  // Agora Contas Mensais é 100% baseada em lembretes, então essas categorias
+  // ficavam invisíveis na tabela mas continuavam contando nos KPIs (Fixas,
+  // Planejado). Migra automaticamente pra lembrete — sem lembrete de
+  // pagamento ativo (só vira Conta Mensal mesmo, sem aparecer em Contas a
+  // Pagar) — nenhum valor se perde, só muda de formato. mesRef bem antigo
+  // (2000-01) garante que ela continua valendo em qualquer mês, como sempre
+  // valeu antes dessa migração.
+  const lembretesArrMig = (typeof lembretes !== 'undefined') ? lembretes : [];
+  const lembreteCatsMig = new Set(lembretesArrMig.filter(l => l && l.tipo !== 'parcela' && l.cat).map(l => String(l.cat).trim()));
+  const categoriasLegadas = Object.keys(state.budgets || {}).filter(cat => {
+    const b = state.budgets[cat];
+    return b && b.isFixed && b.kind === 'expense' && !lembreteCatsMig.has(String(cat).trim());
+  });
+  if (categoriasLegadas.length > 0 && typeof lembretes !== 'undefined') {
+    categoriasLegadas.forEach(cat => {
+      const b = state.budgets[cat];
+      lembretes.push({
+        id: 'l' + Date.now() + Math.random().toString(36).slice(2, 6),
+        desc: cat, cat, dia: null, fixo: true, lembrete: false,
+        valor: Number(b.default || b.budget || 0), mesRef: '2000-01', pago: {}
+      });
+      delete state.budgets[cat];
+      Object.keys(state.monthlyHistory || {}).forEach(m => {
+        if (state.monthlyHistory[m]?.budgets?.[cat]) delete state.monthlyHistory[m].budgets[cat];
+      });
+    });
+    if (typeof saveLembretes === 'function') saveLembretes();
+    changed = true;
+  }
+
   if (changed) {
     saveLocal();
     if (currentUser) {
       try {
+        for (const cat of categoriasLegadas) {
+          try { await deleteDoc(doc(db, 'users', currentUser.uid, 'budgets', cat)); } catch(_) {}
+        }
         for (const cat of Object.keys(state.budgets)) {
           if (state.budgets[cat].kind === 'investment')
             await setDoc(doc(db, 'users', currentUser.uid, 'budgets', cat), state.budgets[cat]);
@@ -3087,6 +3122,12 @@ onAuthStateChanged(auth, async (user) => {
         state.budgets = {};
         snap.forEach(d => { state.budgets[d.id] = d.data(); });
         saveLocal(); renderAll();
+        // Reaplica a migração de categorias fixas legadas aqui também — o
+        // primeiro snapshot do Firestore pode chegar depois do migrateData()
+        // inicial (é assíncrono), então sem isso a migração podia não pegar
+        // dados que só chegaram da nuvem depois. É seguro repetir: se não
+        // tiver nada novo pra migrar, não faz nada.
+        migrateData().then(() => renderAll()).catch(e => console.warn('migrateData (budgets snapshot):', e));
       });
     } catch(e) { console.error('budgets snapshot:', e); }
     try {
