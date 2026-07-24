@@ -601,10 +601,14 @@
         </div>
       </div>
 
-      <div class="parcel-group" id="lembrete-group" style="grid-template-columns:1fr">
+      <div class="parcel-group" id="lembrete-group">
         <div class="form-row">
           <label class="form-label">Dia de vencimento (do mês)</label>
           <input id="input-lembrete-dia" type="number" min="1" max="31" placeholder="Ex: 10" class="form-input" />
+        </div>
+        <div class="form-row">
+          <label class="form-label">Mês de referência</label>
+          <input id="input-lembrete-mesref" type="month" class="form-input" />
         </div>
       </div>
 
@@ -738,6 +742,10 @@
         lembreteGrp.classList.toggle('visible', lembreteCheck.checked);
         if (lembreteSublabel) lembreteSublabel.style.display = lembreteCheck.checked ? 'block' : 'none';
         toggleDateCompVisibility();
+        const mesrefInp = document.getElementById('input-lembrete-mesref');
+        if (lembreteCheck.checked && mesrefInp && !mesrefInp.value) {
+          mesrefInp.value = (typeof window.getMesAtivo === 'function') ? window.getMesAtivo() : new Date().toISOString().slice(0,7);
+        }
       });
     }
 
@@ -783,10 +791,10 @@
   <!-- Modal lembrete -->
   <div id="lembrete-modal-back" style="display:none;position:fixed;inset:0;background:rgba(13,31,60,0.55);z-index:800;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(3px)">
     <div class="app-edit-modal" style="max-width:420px">
-      <h3 id="lembrete-modal-title">Nova Conta a Pagar</h3>
+      <h3 id="lembrete-modal-title">Nova Conta</h3>
       <input type="hidden" id="lembrete-edit-id"/>
       <input type="hidden" id="lembrete-migrate-cat"/>
-      <div class="app-row"><label>Descrição <span class="small muted">Ex: Boleto da pós, Parcela do carro</span></label><input id="lembrete-desc" placeholder="Ex: Boleto da faculdade"/></div>
+      <div class="app-row"><label>Nome <span class="small muted">Ex: Boleto da pós, Assinatura iFood</span></label><input id="lembrete-desc" placeholder="Ex: Boleto da faculdade"/></div>
       <div class="app-row">
         <label>Categoria</label>
         <select id="lembrete-cat-select" class="form-select" style="margin-bottom:6px">
@@ -795,19 +803,30 @@
         <input id="lembrete-cat" placeholder="Ou digite uma nova categoria" style="margin-top:4px"/>
         <span class="small muted" style="margin-top:2px">Selecione acima ou digite uma nova abaixo</span>
       </div>
-      <div class="app-row" id="lembrete-dia-row"><label>Dia do vencimento (todo mês)</label><input id="lembrete-dia" type="number" min="1" max="31" placeholder="Ex: 10"/></div>
+      <div class="app-row" id="lembrete-valor-row">
+        <label id="lembrete-valor-label">Valor (R$)</label>
+        <input id="lembrete-valor" type="number" step="0.01" min="0" placeholder="0,00"/>
+      </div>
       <p class="small muted" id="lembrete-parcela-note" style="display:none;margin-bottom:12px;padding:6px 10px;background:rgba(99,102,241,0.08);border-radius:6px;border-left:3px solid #6366f1">📋 Essa conta está vinculada a um parcelamento — o valor e o número da parcela vêm automaticamente da tabela de Parcelas. Aqui você só edita nome, categoria e dia de vencimento.</p>
       <div class="app-row" id="lembrete-fixo-row" style="background:var(--surface-2);border-radius:var(--r-sm);padding:10px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700">
           <input type="checkbox" id="lembrete-fixo" style="width:16px;height:16px"/>
-          Conta mensal recorrente
+          🔁 Conta mensal recorrente
         </label>
         <p class="small muted" style="margin:4px 0 0 24px">Marque se essa conta se repete todo mês (ela vai aparecer em Contas → Contas Mensais). Desmarque se for um boleto avulso, de um mês só.</p>
       </div>
-      <div class="app-row" id="lembrete-valor-row">
-        <label id="lembrete-valor-label">Valor de referência (R$)</label>
-        <input id="lembrete-valor" type="number" step="0.01" min="0" placeholder="0,00"/>
-        <span class="small muted" style="margin-top:2px">Pode ajustar o valor exato na hora de confirmar o pagamento.</span>
+      <div class="app-row" id="lembrete-lembrete-row" style="background:var(--surface-2);border-radius:var(--r-sm);padding:10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700">
+          <input type="checkbox" id="lembrete-tem-lembrete" style="width:16px;height:16px"/>
+          🔔 Adicionar lembrete
+        </label>
+        <p class="small muted" style="margin:4px 0 0 24px">Mostra essa conta em "Contas a Pagar", na tela inicial, pra você não esquecer de pagar. Independente de ser recorrente ou não.</p>
+      </div>
+      <div class="app-row" id="lembrete-dia-row" style="display:none"><label>Dia do vencimento (todo mês)</label><input id="lembrete-dia" type="number" min="1" max="31" placeholder="Ex: 10"/></div>
+      <div class="app-row" id="lembrete-mesref-row" style="display:none">
+        <label>Mês de referência</label>
+        <input id="lembrete-mesref" type="month"/>
+        <span class="small muted" style="margin-top:2px">A partir de qual mês essa conta vale. Se for recorrente, conta a partir daí pra frente; se for avulsa, vale só nesse mês.</span>
       </div>
       <div class="app-actions">
         <button id="lembrete-cancel" class="muted-button">Cancelar</button>

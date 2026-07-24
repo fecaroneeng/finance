@@ -333,7 +333,8 @@ const calcOrcamentoTotal = (month) => {
   // referência, mesmo que várias dividam a mesma categoria (ex: "Assinatura"
   // com iFood + Claude). Isso evita o problema de categoria só guardar 1 valor.
   const lembretesArr = (typeof lembretes !== 'undefined') ? lembretes : [];
-  orcFixo += lembretesArr.filter(l => l && l.fixo).reduce((s, l) => s + Number(l.valor || 0), 0);
+  const mesCalc = sel || (typeof getMesAtivo === 'function' ? getMesAtivo() : new Date().toISOString().slice(0,7));
+  orcFixo += lembretesArr.filter(l => l && l.fixo && getLembreteMesRef(l) <= mesCalc).reduce((s, l) => s + Number(l.valor || 0), 0);
   const lembreteCats = new Set(lembretesArr.filter(l => l && l.fixo && l.cat).map(l => String(l.cat).trim()));
   Object.keys(state.budgets || {}).forEach(cat => {
     const b = getBudgetForMonth(cat, sel);
@@ -663,7 +664,8 @@ const addEntry = async () => {
       lembretes.push(lembreteObj);
     } else {
       // Lembrete simples (avulso) ou Lembrete + Conta mensal recorrente
-      const lembreteObj = { id: 'l'+Date.now(), desc: description, cat: finalCategory, dia, fixo: fixedChecked, valor: value, mesRef: getMesAtivo(), pago: {} };
+      const mesRefInput = (el('input-lembrete-mesref')?.value || '').trim() || getMesAtivo();
+      const lembreteObj = { id: 'l'+Date.now(), desc: description, cat: finalCategory, dia, fixo: fixedChecked, lembrete: true, valor: value, mesRef: mesRefInput, pago: {} };
       lembretes.push(lembreteObj);
     }
     saveLembretes();
@@ -672,13 +674,40 @@ const addEntry = async () => {
     return;
   }
 
-  // ── DESPESA DIRETA (sem lembrete) — comportamento de sempre ────────────────
-  const isNewCategory = catTextVisible && catTextEl.value.trim() !== '';
-  if (isNewCategory || (fixedChecked && finalCategory)) {
-    await setBudget(finalCategory, { budget: value, default: value, isFixed: fixedChecked, kind: 'expense' });
+  // ── DESPESA RECORRENTE SEM LEMBRETE (pagamento direto) ──────────────────────
+  // "Conta mensal recorrente" marcado, mas "Adicionar lembrete" não: você tá
+  // dizendo "já paguei isso agora". Lança a despesa deste mês normalmente E
+  // registra/atualiza a Conta Mensal correspondente (sem lembrete ativo), pra
+  // ela continuar aparecendo em Contas Mensais nos próximos meses também.
+  if (type === 'expense' && !parceled && fixedChecked) {
+    const isNewCategory = catTextVisible && catTextEl.value.trim() !== '';
+    if (isNewCategory && !state.budgets[finalCategory]) {
+      await setBudget(finalCategory, { budget: 0, default: 0, isFixed: false, kind: 'expense' });
+    }
+    let contaMensal = lembretes.find(l => l && l.fixo && l.tipo !== 'parcela' && (l.desc||'').trim().toLowerCase() === (description||'').trim().toLowerCase());
+    if (!contaMensal) {
+      contaMensal = { id: 'l'+Date.now(), desc: description || finalCategory, cat: finalCategory, dia: null, fixo: true, lembrete: false, valor: value, mesRef: competence, pago: {} };
+      lembretes.push(contaMensal);
+    } else {
+      contaMensal.cat = finalCategory; contaMensal.valor = value;
+    }
+    const entry = { id: entryId, date, competence, type: 'expense', category: finalCategory, description, value, fixed: true, _fromLembrete: contaMensal.id };
+    state.entries.push(entry);
+    contaMensal.pago = contaMensal.pago || {};
+    contaMensal.pago[competence] = { pago:true, valorReal:value, dataPago:date, entryId };
+    saveLembretes();
+    if (currentUser) {
+      try { await setDoc(doc(db, 'users', currentUser.uid, 'entries', entryId), entry); } catch(e) {}
+    }
+    saveLocal(); clearForm(); renderAll();
+    window.dispatchEvent(new Event('app:state-changed'));
+    return;
   }
-  if (fixedChecked && finalCategory && state.budgets[finalCategory] && !state.budgets[finalCategory].isFixed) {
-    await setBudget(finalCategory, { budget: value, default: value, isFixed: true, kind: 'expense' });
+
+  // ── DESPESA DIRETA (dia a dia, sem lembrete e sem recorrência) ──────────────
+  const isNewCategory = catTextVisible && catTextEl.value.trim() !== '';
+  if (isNewCategory) {
+    await setBudget(finalCategory, { budget: value, default: value, isFixed: false, kind: 'expense' });
   }
 
   if (parceled) {
@@ -718,7 +747,7 @@ const addEntry = async () => {
       } catch(e) {}
     }
   } else {
-    const entry = { id: entryId, date, competence, type: 'expense', category: finalCategory, description, value, fixed: fixedChecked };
+    const entry = { id: entryId, date, competence, type: 'expense', category: finalCategory, description, value, fixed: false };
     state.entries.push(entry);
     if (currentUser) {
       try { await setDoc(doc(db, 'users', currentUser.uid, 'entries', entryId), entry); } catch(e) {}
@@ -1169,14 +1198,25 @@ const editBudget = (category) => {
       Object.keys(state.monthlyHistory||{}).forEach(m=>{ if(state.monthlyHistory[m]?.budgets?.[newCatName]) delete state.monthlyHistory[m].budgets[newCatName]; });
       if (currentUser) { try { await deleteDoc(doc(db, 'users', currentUser.uid, 'budgets', newCatName)); } catch(e){} }
       saveLocal();
+    if (isFixed) {
+      // "Custo fixo mensal" marcado = vira (ou atualiza) uma Conta Mensal de
+      // verdade — sempre um lembrete-objeto agora, com ou sem lembrete ativo.
+      const existente = lembretes.find(l => l && l.tipo !== 'parcela' && l.cat === newCatName);
+      if (existente) { existente.cat = newCatName; existente.dia = lembreteDia; existente.fixo = true; existente.lembrete = wantLembrete; existente.valor = budget; if(!existente.mesRef) existente.mesRef = getMesAtivo(); }
+      else { lembretes.push({ id:'l'+Date.now(), desc:newCatName, cat:newCatName, dia:lembreteDia, fixo:true, lembrete:wantLembrete, valor:budget, mesRef:getMesAtivo(), pago:{} }); }
+      saveLembretes();
+      delete state.budgets[newCatName];
+      Object.keys(state.monthlyHistory||{}).forEach(m=>{ if(state.monthlyHistory[m]?.budgets?.[newCatName]) delete state.monthlyHistory[m].budgets[newCatName]; });
+      if (currentUser) { try { await deleteDoc(doc(db, 'users', currentUser.uid, 'budgets', newCatName)); } catch(e){} }
+      saveLocal();
     } else {
-      await setBudget(newCatName, { budget, default: budget, isFixed, kind: b.kind || 'expense' }, sel);
+      await setBudget(newCatName, { budget, default: budget, isFixed: false, kind: b.kind || 'expense' }, sel);
       const existente = (!isInvest && typeof lembretes !== 'undefined') ? lembretes.find(l => l && l.tipo !== 'parcela' && l.cat === newCatName) : null;
       if (wantLembrete) {
-        // Categoria continua normal (dia a dia ou fixa manual) — só ganha um
-        // lembrete avulso pra não esquecer de olhar/pagar.
-        if (existente) { existente.dia = lembreteDia; existente.fixo = false; }
-        else { lembretes.push({ id:'l'+Date.now(), desc:newCatName, cat:newCatName, dia:lembreteDia, fixo:false, valor:budget, mesRef:getMesAtivo(), pago:{} }); }
+        // Categoria continua normal (dia a dia) — só ganha um lembrete avulso
+        // pra não esquecer de olhar/pagar.
+        if (existente) { existente.dia = lembreteDia; existente.fixo = false; existente.lembrete = true; }
+        else { lembretes.push({ id:'l'+Date.now(), desc:newCatName, cat:newCatName, dia:lembreteDia, fixo:false, lembrete:true, valor:budget, mesRef:getMesAtivo(), pago:{} }); }
         saveLembretes();
       } else if (existente) {
         lembretes = lembretes.filter(l => l.id !== existente.id);
@@ -1659,36 +1699,22 @@ const renderFixedTable = () => {
   const tbody = qs('#fixed-list-table tbody');
   if (!tbody) return;
   tbody.innerHTML = '';
-  const mesRef = selectedFilterMonth !== 'all' ? selectedFilterMonth : new Date().toISOString().slice(0,7);
-  const recorrentes = (typeof lembretes !== 'undefined' ? lembretes : []).filter(l => l && l.fixo);
-  const lembreteCats = new Set(recorrentes.filter(l => l.cat).map(l => String(l.cat).trim()));
+  const mesAtivo = getMesAtivo();
+  // Contas Mensais = toda conta marcada como "recorrente", a partir do mês de
+  // referência dela (pra não aparecer em meses anteriores à criação).
+  const recorrentes = (typeof lembretes !== 'undefined' ? lembretes : []).filter(l => l && l.fixo && getLembreteMesRef(l) <= mesAtivo);
 
-  // Linhas vindas de contas a pagar marcadas como "Conta mensal recorrente"
   const rows = recorrentes.map(l => {
-    const mesData = l.pago?.[mesRef];
+    const mesData = l.pago?.[mesAtivo];
     const val = (mesData && mesData.pago && mesData.valorReal != null) ? Number(mesData.valorReal) : Number(l.valor || 0);
     return { nome: l.desc || '—', cat: l.cat || '', val, onEdit: `editLembrete('${l.id}')`, onDel: `deleteLembrete('${l.id}')` };
   });
 
-  // Linhas vindas de categorias marcadas como fixas direto no lançamento ou em
-  // Orçamentos (sem passar por Contas a Pagar). Categorias já representadas
-  // por uma conta a pagar acima não entram de novo, pra não duplicar.
-  const catSet = new Set([
-    ...Object.keys(state.budgets || {}),
-    ...(state.monthlyHistory?.[mesRef]?.budgets ? Object.keys(state.monthlyHistory[mesRef].budgets) : [])
-  ]);
-  Array.from(catSet).sort().forEach(cat => {
-    if (lembreteCats.has(String(cat).trim())) return;
-    const b = getBudgetForMonth(cat, mesRef);
-    if (!b || !b.isFixed || b.kind !== 'expense') return;
-    rows.push({ nome: cat, cat, val: Number(b.default || b.budget || 0), onEdit: `editBudget('${cat.replace(/'/g,"\\'")}')`, onDel: `removeBudget('${cat.replace(/'/g,"\\'")}')` });
-  });
-
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="muted">Nenhuma conta mensal ainda. Marque "Conta mensal recorrente" ao lançar algo, ou em "Contas a Pagar" na tela inicial.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4" class="muted">Nenhuma conta mensal ainda. Marque "Conta mensal recorrente" ao criar uma conta.</td></tr>';
     if (el('subtotal-fixed-list')) el('subtotal-fixed-list').innerHTML = '<strong>' + formatMoney(0) + '</strong>';
     const fixedMonthEl0 = el('fixed-active-month');
-    if (fixedMonthEl0) fixedMonthEl0.textContent = mesRef;
+    if (fixedMonthEl0) fixedMonthEl0.textContent = mesAtivo;
     return;
   }
 
@@ -1702,7 +1728,7 @@ const renderFixedTable = () => {
   });
   if (el('subtotal-fixed-list')) el('subtotal-fixed-list').innerHTML = '<strong>' + formatMoney(total) + '</strong>';
   const fixedMonthEl = el('fixed-active-month');
-  if (fixedMonthEl) fixedMonthEl.textContent = mesRef;
+  if (fixedMonthEl) fixedMonthEl.textContent = mesAtivo;
 };
 
 const renderBudgetTable = () => {
@@ -1899,20 +1925,34 @@ function getLembreteMesRef(l){
 }
 window.getLembreteMesRef = getLembreteMesRef;
 
+// ── getLembreteMesPago ───────────────────────────────────────────────────────
+// Em qual "mês" o pagamento/confirmação de um lembrete deve ser registrado:
+// pra recorrentes e parcelas, é sempre o mês que você está vendo (mesVisto);
+// pra avulsas, é sempre o mês de origem dela (mesRef) — mesmo que você esteja
+// vendo um mês mais à frente (é assim que uma conta avulsa vencida "carrega"
+// pros meses seguintes até ser paga, ao invés de sumir).
+function getLembreteMesPago(l, mesVisto){
+  if (!l) return mesVisto;
+  if (l.tipo === 'parcela' || l.fixo) return mesVisto;
+  return getLembreteMesRef(l);
+}
+window.getLembreteMesPago = getLembreteMesPago;
+
 function getLembretesPendentesTotal(month){
   const m = month || getMesAtivo();
   if (typeof lembretes === 'undefined' || !lembretes.length) return 0;
   return lembretes
-    .filter(l => !(l.pago && l.pago[m] && l.pago[m].pago))
     // Contas mensais recorrentes (l.fixo) já entram permanentemente no Total
     // Planejado via calcOrcamentoTotal — não soma aqui de novo. Só contas
     // avulsas (não recorrentes) aparecem como "A Pagar" extra.
-    .filter(l => !l.fixo)
+    .filter(l => l && !l.fixo)
     // Lembretes-espelho de parcelamento (tipo:'parcela') não têm valor próprio
     // — a parcela já é contada normalmente em "Parcelas", então não soma aqui.
     .filter(l => l.tipo !== 'parcela')
-    // Contas avulsas só contam no mês a que pertencem (respeita o filtro).
-    .filter(l => getLembreteMesRef(l) === m)
+    // Contas avulsas contam a partir do mês a que pertencem — se ficarem sem
+    // pagar, continuam entrando em "A Pagar" nos meses seguintes também.
+    .filter(l => getLembreteMesRef(l) <= m)
+    .filter(l => !(l.pago && l.pago[getLembreteMesRef(l)] && l.pago[getLembreteMesRef(l)].pago))
     .reduce((s, l) => s + Number(l.valor || 0), 0);
 }
 window.getLembretesPendentesTotal = getLembretesPendentesTotal;
@@ -1945,10 +1985,18 @@ function getLembretesPrevistoParaMes(month){
   let total = 0;
   lembretes.forEach(l => {
     if (!l || l.tipo === 'parcela') return;
-    const jaPago = !!(l.pago && l.pago[month] && l.pago[month].pago);
-    if (jaPago) return;
-    if (l.fixo) { total += Number(l.valor || 0); }
-    else if (getLembreteMesRef(l) === month) { total += Number(l.valor || 0); }
+    const ref = getLembreteMesRef(l);
+    if (ref > month) return; // ainda não chegou o mês dela
+    if (l.fixo) {
+      const jaPago = !!(l.pago && l.pago[month] && l.pago[month].pago);
+      if (!jaPago) total += Number(l.valor || 0);
+    } else {
+      // Avulsa: verifica se já foi paga no mês DELA (não no mês projetado) —
+      // é assim que uma conta vencida continua entrando no previsto dos
+      // meses seguintes até ser paga.
+      const jaPago = !!(l.pago && l.pago[ref] && l.pago[ref].pago);
+      if (!jaPago) total += Number(l.valor || 0);
+    }
   });
   return total;
 }
@@ -2020,20 +2068,32 @@ function renderLembretes(){
   const mes = getMesAtivo();
   const mesRealAtual = new Date().toISOString().slice(0,7);
   const isMesAtual = mes === mesRealAtual;
-  const isMesPassado = mes < mesRealAtual;
   const hoje = new Date().getDate();
   if(!lembretes.length){
     container.innerHTML = '<div class="lembrete-empty small muted">Nenhuma conta. Clique em "+ Adicionar" para criar.</div>';
     return;
   }
 
+  // Pra cada lembrete, o "mês de referência pra pagamento" (mesPago) é: o mês
+  // ativo pra recorrentes/parcelas, ou o próprio mês de origem (mesRef) pra
+  // contas avulsas — isso é o que permite uma conta avulsa vencida "carregar"
+  // pros meses seguintes até ser paga, ao invés de simplesmente sumir.
+  const getMesPago = (l) => getLembreteMesPago(l, mes);
+
   // Lembretes-espelho de parcelamento só existem no mês se a série tiver
-  // parcela ativa. Contas avulsas só aparecem no mês a que pertencem (mesRef).
-  // Contas recorrentes (fixo) aparecem em todo mês.
+  // parcela ativa. Contas recorrentes aparecem a partir do mês de referência
+  // delas. Contas avulsas aparecem a partir do mês de referência — e, se
+  // ficarem sem pagar, continuam aparecendo (vencidas) nos meses seguintes
+  // também, até serem pagas. Em qualquer caso, só mostra quem tem
+  // "Adicionar lembrete" marcado.
   const visiveis = lembretes.filter(l => {
     if (l.tipo === 'parcela') return !!getParcelaLembreteInfo(l, mes);
-    if (!l.fixo) return getLembreteMesRef(l) === mes;
-    return true;
+    if (l.lembrete === false) return false;
+    const ref = getLembreteMesRef(l);
+    if (ref > mes) return false; // ainda não chegou o mês dela
+    if (l.fixo) return true;
+    // Avulsa: se já foi paga no mês dela, não aparece mais em lugar nenhum.
+    return !(l.pago && l.pago[ref] && l.pago[ref].pago);
   });
 
   if(!visiveis.length){
@@ -2042,35 +2102,34 @@ function renderLembretes(){
   }
 
   const sorted = [...visiveis].sort((a,b) => {
-    const ap = a.pago?.[mes]?.pago||false, bp = b.pago?.[mes]?.pago||false;
+    const ap = a.pago?.[getMesPago(a)]?.pago||false, bp = b.pago?.[getMesPago(b)]?.pago||false;
     if(ap!==bp) return ap?1:-1;
     return (a.dia||31)-(b.dia||31);
   });
 
-  const pendentes = sorted.filter(l => !l.pago?.[mes]?.pago);
-  const pagas     = sorted.filter(l =>  l.pago?.[mes]?.pago);
+  const pendentes = sorted.filter(l => !l.pago?.[getMesPago(l)]?.pago);
+  const pagas     = sorted.filter(l =>  l.pago?.[getMesPago(l)]?.pago);
 
   function buildItem(l, pago){
     const isParcela = l.tipo === 'parcela';
+    const mesPago = getMesPago(l);
+    const isCarregada = !isParcela && !l.fixo && mesPago < mes; // avulsa vencida de mês anterior
     const parcelaInfo = isParcela ? getParcelaLembreteInfo(l, mes) : null;
-    const mesData = l.pago?.[mes]||{};
+    const mesData = l.pago?.[mesPago]||{};
     const valorRef = isParcela ? (parcelaInfo ? parcelaInfo.valor : 0) : (mesData.valorReal!=null ? mesData.valorReal : (l.valor||0));
     // Urgência só faz sentido se a conta TEM dia de vencimento definido, e só
     // comparando com o dia real de hoje quando o mês ativo é o mês atual.
     // Sem dia definido = sempre neutro ("Sem vencimento"), nunca "vencida".
-    let vencido = false, urgente = false, diasR = null;
-    if (l.dia) {
-      if (isMesAtual) {
-        diasR = l.dia - hoje;
-        vencido = diasR < 0;
-        urgente = diasR >= 0 && diasR <= 3;
-      } else if (isMesPassado) {
-        vencido = true;
-      }
+    // Avulsa carregada de um mês anterior = sempre vencida (já passou do mês dela).
+    let vencido = isCarregada, urgente = false, diasR = null;
+    if (!isCarregada && l.dia && isMesAtual) {
+      diasR = l.dia - hoje;
+      vencido = diasR < 0;
+      urgente = diasR >= 0 && diasR <= 3;
     }
     let statusClass='lembrete-pendente', statusText=l.dia?`Vence dia ${l.dia}`:'Sem vencimento';
-    if(pago)    { statusClass='lembrete-pago';    statusText = isParcela ? `Confirmada em ${mesData.dataPago||mes}` : `Pago em ${mesData.dataPago||mes} · ${formatMoney(valorRef)}`; }
-    else if(vencido){ statusClass='lembrete-vencido'; statusText=`⚠️ Vencida (dia ${l.dia})`; }
+    if(pago)    { statusClass='lembrete-pago';    statusText = isParcela ? `Confirmada em ${mesData.dataPago||mesPago}` : `Pago em ${mesData.dataPago||mesPago} · ${formatMoney(valorRef)}`; }
+    else if(vencido){ statusClass='lembrete-vencido'; statusText= isCarregada ? `⚠️ Vencida (${mesPago})` : `⚠️ Vencida (dia ${l.dia})`; }
     else if(urgente){ statusClass='lembrete-urgente'; statusText=`🔥 Vence em ${diasR}d`; }
     const descExibida = isParcela ? `${escapeHtml(l.desc||'')} <span style="font-size:0.68rem;color:var(--text-3)">— Parcela ${parcelaInfo?parcelaInfo.parcelLabel:''}</span>` : escapeHtml(l.desc||'');
     const badges = isParcela
@@ -2190,7 +2249,7 @@ el('lembrete-pagar-confirm')?.addEventListener('click', async()=>{
     const id = el('lembrete-pagar-id')?.value;
     const tipo = el('lembrete-pagar-tipo')?.value;
     const l = lembretes.find(x=>x.id===id); if(!l) return;
-    const mes = getMesAtivo();
+    const mes = getLembreteMesPago(l, getMesAtivo());
 
     // ── Lembrete-espelho de parcela: só marca como "confirmada" — a parcela
     // em si já está contabilizada normalmente, não cria lançamento nenhum. ──
@@ -2248,7 +2307,7 @@ el('lembrete-pagar-confirm')?.addEventListener('click', async()=>{
 
 async function cancelarPagamentoLembrete(id){
   const l = lembretes.find(x=>x.id===id); if(!l) return;
-  const mes = getMesAtivo();
+  const mes = getLembreteMesPago(l, getMesAtivo());
   const mesData = l.pago?.[mes];
   if(!mesData || !mesData.pago){ alert('Esta conta não está paga neste mês.'); return; }
 
@@ -2329,12 +2388,19 @@ function initLembretes(){
     sel.onchange=()=>{ const inp=el('lembrete-cat'); if(inp&&sel.value) inp.value=sel.value; };
   }
 
+  function updateLembreteSubRows(){
+    const temLembrete = !!el('lembrete-tem-lembrete')?.checked;
+    const diaRow = el('lembrete-dia-row');
+    const mesrefRow = el('lembrete-mesref-row');
+    if (diaRow) diaRow.style.display = temLembrete ? '' : 'none';
+    if (mesrefRow) mesrefRow.style.display = temLembrete ? '' : 'none';
+  }
+
   function openLembreteModal(id){
     const modal=el('lembrete-modal-back'); if(!modal) return;
     const fixoRow = el('lembrete-fixo-row');
     const valorRow = el('lembrete-valor-row');
     const parcelaNote = el('lembrete-parcela-note');
-    el('lembrete-migrate-cat').value = '';
     if(id){
       const l=lembretes.find(x=>x.id===id); if(!l) return;
       const isParcela = l.tipo === 'parcela';
@@ -2344,90 +2410,63 @@ function initLembretes(){
       el('lembrete-cat').value=l.cat||'';
       el('lembrete-dia').value=l.dia||'';
       el('lembrete-valor').value=l.valor||'';
+      el('lembrete-mesref').value = l.mesRef || getMesAtivo();
       if(el('lembrete-fixo')) el('lembrete-fixo').checked=!!l.fixo;
+      if(el('lembrete-tem-lembrete')) el('lembrete-tem-lembrete').checked = l.lembrete !== false;
       if (fixoRow) fixoRow.style.display = isParcela ? 'none' : '';
       if (valorRow) valorRow.style.display = isParcela ? 'none' : '';
       if (parcelaNote) parcelaNote.style.display = isParcela ? 'block' : 'none';
       populateLembreteCatSelect(l.cat||'');
     } else {
-      el('lembrete-modal-title').textContent='Nova Conta a Pagar';
+      el('lembrete-modal-title').textContent='Nova Conta';
       el('lembrete-edit-id').value='';
       ['lembrete-desc','lembrete-cat'].forEach(i=>{const e=el(i);if(e)e.value='';});
       ['lembrete-valor','lembrete-dia'].forEach(i=>{const e=el(i);if(e)e.value='';});
+      el('lembrete-mesref').value = getMesAtivo();
       if(el('lembrete-fixo')) el('lembrete-fixo').checked=false;
+      if(el('lembrete-tem-lembrete')) el('lembrete-tem-lembrete').checked=true;
       if (fixoRow) fixoRow.style.display = '';
       if (valorRow) valorRow.style.display = '';
       if (parcelaNote) parcelaNote.style.display = 'none';
       populateLembreteCatSelect('');
     }
+    updateLembreteSubRows();
     modal.style.display='flex';
   }
-
-  // ── openLembreteModalForCategoria ─────────────────────────────────────────
-  // Abre o mesmo modal de "Conta Mensal" pra editar uma categoria fixa
-  // LEGADA (criada direto em Orçamentos/lançamento, sem passar por Contas a
-  // Pagar). Ao salvar, ela vira um lembrete de verdade (Nome/Categoria/Valor/
-  // dia de vencimento/recorrente, tudo interligado) e a categoria antiga é
-  // removida — nada se perde, só migra de formato.
-  function openLembreteModalForCategoria(cat){
-    const modal=el('lembrete-modal-back'); if(!modal) return;
-    const fixoRow = el('lembrete-fixo-row');
-    const valorRow = el('lembrete-valor-row');
-    const parcelaNote = el('lembrete-parcela-note');
-    const b = state.budgets[cat] || {};
-    el('lembrete-modal-title').textContent = 'Editar Conta Mensal';
-    el('lembrete-edit-id').value = '';
-    el('lembrete-migrate-cat').value = cat;
-    el('lembrete-desc').value = cat;
-    el('lembrete-cat').value = cat;
-    el('lembrete-dia').value = '';
-    el('lembrete-valor').value = b.default || b.budget || 0;
-    if(el('lembrete-fixo')) el('lembrete-fixo').checked = true;
-    if (fixoRow) fixoRow.style.display = '';
-    if (valorRow) valorRow.style.display = '';
-    if (parcelaNote) parcelaNote.style.display = 'none';
-    populateLembreteCatSelect(cat);
-    modal.style.display='flex';
-  }
-  window.editContaMensalLegacy = cat => openLembreteModalForCategoria(cat);
 
   el('btn-add-lembrete')?.addEventListener('click',()=>openLembreteModal(null));
   el('lembrete-cancel')?.addEventListener('click',()=>{ const m=el('lembrete-modal-back');if(m)m.style.display='none'; });
+  el('lembrete-tem-lembrete')?.addEventListener('change', updateLembreteSubRows);
 
   el('lembrete-save')?.addEventListener('click', async ()=>{
     const id=el('lembrete-edit-id')?.value;
-    const migrateCat=(el('lembrete-migrate-cat')?.value||'').trim();
     const desc=(el('lembrete-desc')?.value||'').trim();
     const cat=(el('lembrete-cat')?.value||'').trim();
-    const dia=parseInt(el('lembrete-dia')?.value)||null;
     const fixo=!!(el('lembrete-fixo')?.checked);
     const valor=parseFloat(el('lembrete-valor')?.value)||0;
+    // Uma conta avulsa (não recorrente) só existe pra lembrar de pagar — então
+    // "tem lembrete" é sempre true nesse caso, mesmo que a caixa não apareça.
+    const temLembreteInput = !!(el('lembrete-tem-lembrete')?.checked);
+    const temLembrete = fixo ? temLembreteInput : true;
+    const dia = temLembrete ? (parseInt(el('lembrete-dia')?.value)||null) : null;
+    const mesRef = (el('lembrete-mesref')?.value||'').trim() || getMesAtivo();
     if(!desc){alert('Descreva a conta');return;}
     if(id){
       const l=lembretes.find(x=>x.id===id);
       if(l){
-        l.desc=desc; l.cat=cat; l.dia=dia;
+        l.desc=desc; l.cat=cat;
         // Lembrete-espelho de parcela: nome/categoria/dia são editáveis, mas
         // valor e "recorrente" continuam sempre ligados à série de parcelas.
-        if (l.tipo !== 'parcela') { l.fixo=fixo; l.valor=valor; }
+        if (l.tipo !== 'parcela') {
+          l.fixo=fixo; l.valor=valor; l.lembrete=temLembrete; l.dia=dia; l.mesRef=mesRef;
+        } else {
+          l.dia = dia;
+        }
       }
     } else {
-      lembretes.push({id:'l'+Date.now(),desc,cat,dia,fixo,valor,mesRef:getMesAtivo(),pago:{}});
-      if(migrateCat){
-        // Migração: a categoria fixa antiga vira lembrete de verdade — remove
-        // a categoria de orçamento legada (e overrides por mês, se houver).
-        delete state.budgets[migrateCat];
-        Object.keys(state.monthlyHistory||{}).forEach(m=>{
-          if(state.monthlyHistory[m]?.budgets?.[migrateCat]) delete state.monthlyHistory[m].budgets[migrateCat];
-        });
-        if(currentUser){
-          try { await deleteDoc(doc(db, 'users', currentUser.uid, 'budgets', migrateCat)); } catch(e){}
-        }
-        saveLocal();
-      }
+      lembretes.push({id:'l'+Date.now(),desc,cat,dia,fixo,lembrete:temLembrete,valor,mesRef,pago:{}});
     }
     saveLembretes();
-    el('lembrete-migrate-cat').value='';
     renderAll();
     el('lembrete-modal-back').style.display='none';
   });
@@ -2454,9 +2493,10 @@ function renderOrcamentoNovo(){
   const mesAtual=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
   const selMes=sel||mesAtual;
   const lembretesPendentes=(typeof lembretes!=='undefined'?lembretes:[])
-    .filter(l=>!(l.pago?.[selMes]?.pago))
     .filter(l=> l.tipo!=='parcela' || !!getParcelaLembreteInfo(l, selMes))
-    .filter(l=> l.fixo || l.tipo==='parcela' || getLembreteMesRef(l)===selMes);
+    .filter(l=> l.tipo==='parcela' || l.lembrete!==false)
+    .filter(l=> l.tipo==='parcela' || getLembreteMesRef(l)<=selMes)
+    .filter(l=> l.tipo==='parcela' ? !(l.pago?.[selMes]?.pago) : !(l.pago?.[l.fixo?selMes:getLembreteMesRef(l)]?.pago));
   // getLembretesPendentesTotal já exclui contas mensais recorrentes (l.fixo),
   // porque essas já entram permanentemente no Total Planejado via orc.total —
   // sem isso o valor delas contaria em dobro aqui.
@@ -2880,6 +2920,7 @@ const clearForm = () => {
   el('input-parceled').checked = false;
   if (el('input-lembrete')) el('input-lembrete').checked = false;
   if (el('input-lembrete-dia')) el('input-lembrete-dia').value = '';
+  if (el('input-lembrete-mesref')) el('input-lembrete-mesref').value = '';
   const pg = document.getElementById('parcel-group');
   if (pg) pg.classList.remove('visible');
   const lg = document.getElementById('lembrete-group');
