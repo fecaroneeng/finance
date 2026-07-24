@@ -1108,7 +1108,7 @@ const editBudget = (category) => {
     : '';
 
   modal.innerHTML = `
-    <h3>Editar ${isInvest ? 'Meta' : 'Orçamento'}</h3>
+    <h3>Editar ${isInvest ? 'Meta' : (b.isFixed ? 'Conta Mensal' : 'Orçamento')}</h3>
     <p class="small" style="color:var(--accent);margin-bottom:12px">📅 Editando: <strong>${sel}</strong></p>
     ${investNote}
     <div class="app-row">
@@ -1681,7 +1681,7 @@ const renderFixedTable = () => {
     if (lembreteCats.has(String(cat).trim())) return;
     const b = getBudgetForMonth(cat, mesRef);
     if (!b || !b.isFixed || b.kind !== 'expense') return;
-    rows.push({ nome: cat, cat, val: Number(b.default || b.budget || 0), onEdit: `editContaMensalLegacy('${cat.replace(/'/g,"\\'")}')`, onDel: `removeBudget('${cat.replace(/'/g,"\\'")}')` });
+    rows.push({ nome: cat, cat, val: Number(b.default || b.budget || 0), onEdit: `editBudget('${cat.replace(/'/g,"\\'")}')`, onDel: `removeBudget('${cat.replace(/'/g,"\\'")}')` });
   });
 
   if (rows.length === 0) {
@@ -2055,16 +2055,18 @@ function renderLembretes(){
     const parcelaInfo = isParcela ? getParcelaLembreteInfo(l, mes) : null;
     const mesData = l.pago?.[mes]||{};
     const valorRef = isParcela ? (parcelaInfo ? parcelaInfo.valor : 0) : (mesData.valorReal!=null ? mesData.valorReal : (l.valor||0));
-    // Urgência só faz sentido comparando com o dia real de hoje — só calcula
-    // isso quando o mês ativo é o mês real atual. Mês passado = sempre
-    // "vencida" se não paga; mês futuro = só mostra "Vence dia X", neutro.
+    // Urgência só faz sentido se a conta TEM dia de vencimento definido, e só
+    // comparando com o dia real de hoje quando o mês ativo é o mês atual.
+    // Sem dia definido = sempre neutro ("Sem vencimento"), nunca "vencida".
     let vencido = false, urgente = false, diasR = null;
-    if (isMesAtual) {
-      diasR = (l.dia||0) - hoje;
-      vencido = diasR < 0;
-      urgente = diasR >= 0 && diasR <= 3;
-    } else if (isMesPassado) {
-      vencido = true;
+    if (l.dia) {
+      if (isMesAtual) {
+        diasR = l.dia - hoje;
+        vencido = diasR < 0;
+        urgente = diasR >= 0 && diasR <= 3;
+      } else if (isMesPassado) {
+        vencido = true;
+      }
     }
     let statusClass='lembrete-pendente', statusText=l.dia?`Vence dia ${l.dia}`:'Sem vencimento';
     if(pago)    { statusClass='lembrete-pago';    statusText = isParcela ? `Confirmada em ${mesData.dataPago||mes}` : `Pago em ${mesData.dataPago||mes} · ${formatMoney(valorRef)}`; }
