@@ -663,7 +663,7 @@ const addEntry = async () => {
       lembretes.push(lembreteObj);
     } else {
       // Lembrete simples (avulso) ou Lembrete + Conta mensal recorrente
-      const lembreteObj = { id: 'l'+Date.now(), desc: description, cat: finalCategory, dia, fixo: fixedChecked, valor: value, pago: {} };
+      const lembreteObj = { id: 'l'+Date.now(), desc: description, cat: finalCategory, dia, fixo: fixedChecked, valor: value, mesRef: getMesAtivo(), pago: {} };
       lembretes.push(lembreteObj);
     }
     saveLembretes();
@@ -774,6 +774,7 @@ const editEntry = (id) => {
     const children    = state.entries.filter(e => e.seriesId === id);
     const currentTotal = Number(entry.series.total || 2);
     const currentStart = Number(entry.series.startIndex || 1);
+    const lembreteVinculado = (typeof lembretes !== 'undefined') ? lembretes.find(l => l && l.tipo === 'parcela' && l.seriesId === id) : null;
 
     const overlay = document.createElement('div'); overlay.className = 'app-edit-overlay';
     const modal   = document.createElement('div'); modal.className   = 'app-edit-modal';
@@ -797,7 +798,17 @@ const editEntry = (id) => {
         <div class="app-row"><label>Total de parcelas</label><select id="ep-total">${totalOpts}</select></div>
         <div class="app-row"><label>Parcela inicial</label><select id="ep-start">${startOpts}</select></div>
       </div>
-      <div class="app-row"><label><input id="ep-fixed" type="checkbox" ${entry.fixed?'checked':''}>Custo fixo mensal</label></div>
+      <div class="app-row" style="background:var(--surface-2);border-radius:var(--r-sm);padding:10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700">
+          <input id="ep-lembrete" type="checkbox" ${lembreteVinculado?'checked':''}>
+          🔔 Adicionar lembrete
+        </label>
+        <p class="small muted" style="margin:4px 0 0 24px">Mostra a parcela do mês em Contas a Pagar, pra não esquecer de pagar.</p>
+      </div>
+      <div class="app-row" id="ep-lembrete-dia-row" style="display:${lembreteVinculado?'flex':'none'};flex-direction:column;gap:5px">
+        <label>Dia de vencimento (todo mês)</label>
+        <input id="ep-lembrete-dia" type="number" min="1" max="31" placeholder="Ex: 10" value="${lembreteVinculado?(lembreteVinculado.dia||''):''}">
+      </div>
       <div class="app-actions">
         <button id="ep-cancel" class="muted-button">Cancelar</button>
         <button id="ep-save" style="background:var(--accent);color:#fff">Salvar série</button>
@@ -814,6 +825,11 @@ const editEntry = (id) => {
         .map(n => `<option value="${n}" ${n===Math.min(prev,t)?'selected':''}>${n}</option>`).join('');
     });
 
+    modal.querySelector('#ep-lembrete').addEventListener('change', (e) => {
+      const row = modal.querySelector('#ep-lembrete-dia-row');
+      if (row) row.style.display = e.target.checked ? 'flex' : 'none';
+    });
+
     modal.querySelector('#ep-cancel').addEventListener('click', () => overlay.remove());
     modal.querySelector('#ep-save').addEventListener('click', async () => {
       const newValue = parseNumber(modal.querySelector('#ep-value').value);
@@ -823,7 +839,8 @@ const editEntry = (id) => {
       const descBase = modal.querySelector('#ep-desc').value.trim().replace(/ \(\d+\/\d+\)$/, '');
       const newDate  = modal.querySelector('#ep-date').value;
       const newComp  = modal.querySelector('#ep-comp').value;
-      const newFixed = modal.querySelector('#ep-fixed').checked;
+      const wantLembrete = modal.querySelector('#ep-lembrete').checked;
+      const lembreteDia  = parseInt(modal.querySelector('#ep-lembrete-dia')?.value) || null;
 
       if (!newComp) { alert('Competência inicial obrigatória'); return; }
       if (newTotal < 1) { alert('Total de parcelas inválido'); return; }
@@ -839,6 +856,7 @@ const editEntry = (id) => {
         } catch(e) {}
       }
 
+      // Compras parceladas nunca são "custo fixo mensal" (têm prazo de validade).
       const newSeries = { start: newComp, total: newTotal, startIndex: newStart, _expanded: true };
       const rootPatch = {
         date:        formatDateISO(newDate),
@@ -846,7 +864,7 @@ const editEntry = (id) => {
         category:    newCat,
         description: descBase,
         value:       newValue,
-        fixed:       newFixed,
+        fixed:       false,
         series:      newSeries
       };
       const rootIdx = state.entries.findIndex(e => e.id === id);
@@ -872,7 +890,7 @@ const editEntry = (id) => {
           category:    newCat,
           description: `${descBase} (${idx}/${newTotal})`,
           value:       newValue,
-          fixed:       newFixed,
+          fixed:       false,
           seriesId:    id,
           seriesIndex: idx,
           seriesTotal: newTotal
@@ -886,6 +904,19 @@ const editEntry = (id) => {
           }
         } catch(e) {}
       }
+
+      // Lembrete-espelho vinculado à série: cria/atualiza ou remove, conforme o toggle.
+      const existente = (typeof lembretes !== 'undefined') ? lembretes.find(l => l && l.tipo === 'parcela' && l.seriesId === id) : null;
+      if (wantLembrete) {
+        if (existente) {
+          existente.desc = descBase; existente.cat = newCat; existente.dia = lembreteDia;
+        } else {
+          lembretes.push({ id: 'l'+Date.now(), desc: descBase, cat: newCat, dia: lembreteDia, fixo: false, valor: 0, tipo: 'parcela', seriesId: id, pago: {} });
+        }
+      } else if (existente) {
+        lembretes = lembretes.filter(l => l.id !== existente.id);
+      }
+      if (typeof saveLembretes === 'function') saveLembretes();
 
       saveLocal(); renderAll();
       window.dispatchEvent(new Event('app:state-changed'));
@@ -1065,6 +1096,7 @@ const editBudget = (category) => {
   const sel = selectedFilterMonth !== 'all' ? selectedFilterMonth : new Date().toISOString().slice(0,7);
   const b   = getBudgetForMonth(cat, sel) || { budget: 0, default: 0, isFixed: false, kind: 'expense' };
   const isInvest = b.kind === 'investment';
+  const lembreteVinculado = (!isInvest && typeof lembretes !== 'undefined') ? lembretes.find(l => l && l.tipo !== 'parcela' && l.cat === cat) : null;
 
   const overlay = document.createElement('div');
   overlay.className = 'app-edit-overlay';
@@ -1087,7 +1119,19 @@ const editBudget = (category) => {
     <div class="app-row"><label>${isInvest ? 'Meta mensal (R$)' : 'Orçamento (R$)'}</label>
       <input id="edit-budget" value="${b.budget || 0}" type="text" inputmode="decimal">
     </div>
-    ${!isInvest ? `<div class="app-row"><label><input id="edit-isFixed" type="checkbox" ${b.isFixed?'checked':''}>Custo fixo mensal</label></div>` : ''}
+    ${!isInvest ? `<div class="app-row"><label><input id="edit-isFixed" type="checkbox" ${b.isFixed?'checked':''}>Custo fixo mensal (conta mensal recorrente)</label></div>` : ''}
+    ${!isInvest ? `
+    <div class="app-row" style="background:var(--surface-2);border-radius:var(--r-sm);padding:10px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700">
+        <input id="edit-lembrete" type="checkbox" ${lembreteVinculado?'checked':''}>
+        🔔 Adicionar lembrete
+      </label>
+      <p class="small muted" style="margin:4px 0 0 24px">Mostra essa conta em "Contas a Pagar", pra não esquecer. Se marcar junto com "Custo fixo mensal", ela vira uma Conta Mensal de verdade.</p>
+    </div>
+    <div class="app-row" id="edit-lembrete-dia-row" style="display:${lembreteVinculado?'flex':'none'};flex-direction:column;gap:5px">
+      <label>Dia de vencimento (todo mês)</label>
+      <input id="edit-lembrete-dia" type="number" min="1" max="31" placeholder="Ex: 10" value="${lembreteVinculado?(lembreteVinculado.dia||''):''}">
+    </div>` : ''}
     <div class="app-actions">
       <button id="edit-budget-cancel" class="muted-button">Cancelar</button>
       <button id="edit-budget-save" style="background:var(--accent);color:#fff">Salvar em ${sel}</button>
@@ -1096,17 +1140,50 @@ const editBudget = (category) => {
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
   modal.querySelector('#edit-budget-cancel').addEventListener('click', () => overlay.remove());
+  modal.querySelector('#edit-lembrete')?.addEventListener('change', (e) => {
+    const row = modal.querySelector('#edit-lembrete-dia-row');
+    if (row) row.style.display = e.target.checked ? 'flex' : 'none';
+  });
   modal.querySelector('#edit-budget-save').addEventListener('click', async () => {
     const newCatName = modal.querySelector('#edit-cat-name').value.trim();
     const budget     = parseNumber(modal.querySelector('#edit-budget').value);
     const isFixed    = isInvest ? false : !!modal.querySelector('#edit-isFixed')?.checked;
+    const wantLembrete  = !isInvest && !!modal.querySelector('#edit-lembrete')?.checked;
+    const lembreteDia   = !isInvest ? (parseInt(modal.querySelector('#edit-lembrete-dia')?.value) || null) : null;
 
     if (!newCatName) { alert('O nome da categoria não pode ficar vazio'); return; }
 
     if (newCatName !== cat) {
       await renameBudgetCategory(cat, newCatName);
     }
-    await setBudget(newCatName, { budget, default: budget, isFixed, kind: b.kind || 'expense' }, sel);
+
+    if (wantLembrete && isFixed) {
+      // Fixa + lembrete = vira Conta Mensal de verdade (lembrete recorrente).
+      // A categoria de orçamento solta deixa de existir — tudo passa a viver
+      // no lembrete, igual às outras Contas Mensais.
+      const existente = lembretes.find(l => l && l.tipo !== 'parcela' && l.cat === newCatName);
+      if (existente) { existente.cat = newCatName; existente.dia = lembreteDia; existente.fixo = true; existente.valor = budget; }
+      else { lembretes.push({ id:'l'+Date.now(), desc:newCatName, cat:newCatName, dia:lembreteDia, fixo:true, valor:budget, mesRef:getMesAtivo(), pago:{} }); }
+      saveLembretes();
+      delete state.budgets[newCatName];
+      Object.keys(state.monthlyHistory||{}).forEach(m=>{ if(state.monthlyHistory[m]?.budgets?.[newCatName]) delete state.monthlyHistory[m].budgets[newCatName]; });
+      if (currentUser) { try { await deleteDoc(doc(db, 'users', currentUser.uid, 'budgets', newCatName)); } catch(e){} }
+      saveLocal();
+    } else {
+      await setBudget(newCatName, { budget, default: budget, isFixed, kind: b.kind || 'expense' }, sel);
+      const existente = (!isInvest && typeof lembretes !== 'undefined') ? lembretes.find(l => l && l.tipo !== 'parcela' && l.cat === newCatName) : null;
+      if (wantLembrete) {
+        // Categoria continua normal (dia a dia ou fixa manual) — só ganha um
+        // lembrete avulso pra não esquecer de olhar/pagar.
+        if (existente) { existente.dia = lembreteDia; existente.fixo = false; }
+        else { lembretes.push({ id:'l'+Date.now(), desc:newCatName, cat:newCatName, dia:lembreteDia, fixo:false, valor:budget, mesRef:getMesAtivo(), pago:{} }); }
+        saveLembretes();
+      } else if (existente) {
+        lembretes = lembretes.filter(l => l.id !== existente.id);
+        saveLembretes();
+      }
+    }
+    renderAll();
     overlay.remove();
   });
 };
@@ -1604,7 +1681,7 @@ const renderFixedTable = () => {
     if (lembreteCats.has(String(cat).trim())) return;
     const b = getBudgetForMonth(cat, mesRef);
     if (!b || !b.isFixed || b.kind !== 'expense') return;
-    rows.push({ nome: cat, cat, val: Number(b.default || b.budget || 0), onEdit: `editBudget('${cat.replace(/'/g,"\\'")}')`, onDel: `removeBudget('${cat.replace(/'/g,"\\'")}')` });
+    rows.push({ nome: cat, cat, val: Number(b.default || b.budget || 0), onEdit: `editContaMensalLegacy('${cat.replace(/'/g,"\\'")}')`, onDel: `removeBudget('${cat.replace(/'/g,"\\'")}')` });
   });
 
   if (rows.length === 0) {
@@ -1719,8 +1796,9 @@ const renderMonthlyProjection = () => {
   const rows = months.map(month => {
     const totals = calcTotals(month);
     const orc    = calcOrcamentoTotal(month);
+    const previstoLembretes = (typeof getLembretesPrevistoParaMes === 'function') ? getLembretesPrevistoParaMes(month) : 0;
     const entradas  = totals.realReceita;
-    const saidas    = totals.variableTotal + totals.fixedTotal + (totals.parcelasTotal||0) + totals.investTotal;
+    const saidas    = totals.variableTotal + totals.fixedTotal + (totals.parcelasTotal||0) + totals.investTotal + previstoLembretes;
     const planejado = orc.total;
     const saldo     = entradas - saidas;
     return { month, entradas, saidas, planejado, saldo };
@@ -1802,8 +1880,27 @@ function updateDashboardParcelas(){
 const LEMBRETES_KEY = 'finance_lembretes_v1';
 let lembretes = JSON.parse(localStorage.getItem(LEMBRETES_KEY) || '[]');
 
+// ── getMesAtivo ─────────────────────────────────────────────────────────────
+// O "mês ativo" pro sistema de lembretes é o mês selecionado no filtro do
+// topo (ou o mês real de hoje, se o filtro estiver em "Todos os meses").
+function getMesAtivo(){
+  return (typeof selectedFilterMonth !== 'undefined' && selectedFilterMonth !== 'all')
+    ? selectedFilterMonth
+    : new Date().toISOString().slice(0,7);
+}
+window.getMesAtivo = getMesAtivo;
+
+// ── getLembreteMesRef ────────────────────────────────────────────────────────
+// Pra contas avulsas (não recorrentes, não-parcela): o mês ao qual elas
+// "pertencem" — pra que o filtro de mês funcione também pra elas. Lembretes
+// antigos sem esse campo caem no mês real de hoje (comportamento de antes).
+function getLembreteMesRef(l){
+  return (l && l.mesRef) || new Date().toISOString().slice(0,7);
+}
+window.getLembreteMesRef = getLembreteMesRef;
+
 function getLembretesPendentesTotal(month){
-  const m = month || (typeof selectedFilterMonth !== 'undefined' && selectedFilterMonth !== 'all' ? selectedFilterMonth : new Date().toISOString().slice(0,7));
+  const m = month || getMesAtivo();
   if (typeof lembretes === 'undefined' || !lembretes.length) return 0;
   return lembretes
     .filter(l => !(l.pago && l.pago[m] && l.pago[m].pago))
@@ -1814,6 +1911,8 @@ function getLembretesPendentesTotal(month){
     // Lembretes-espelho de parcelamento (tipo:'parcela') não têm valor próprio
     // — a parcela já é contada normalmente em "Parcelas", então não soma aqui.
     .filter(l => l.tipo !== 'parcela')
+    // Contas avulsas só contam no mês a que pertencem (respeita o filtro).
+    .filter(l => getLembreteMesRef(l) === m)
     .reduce((s, l) => s + Number(l.valor || 0), 0);
 }
 window.getLembretesPendentesTotal = getLembretesPendentesTotal;
@@ -1830,6 +1929,30 @@ function getParcelaLembreteInfo(l, mes){
   return { child, valor: Number(child.value||0), parcelLabel: `${child.seriesIndex}/${child.seriesTotal}` };
 }
 window.getParcelaLembreteInfo = getParcelaLembreteInfo;
+
+// ── getLembretesPrevistoParaMes ─────────────────────────────────────────────
+// Pra Visão Mensal (Evolução/Projeção): soma o que ainda está pendente em
+// Contas a Pagar pra um mês, SEM duplicar o que já é contado em outro lugar:
+//  - Contas-espelho de parcela (tipo:'parcela') → já contam via parcelasTotal
+//    (a parcela em si já existe como lançamento real), não soma aqui.
+//  - Contas já pagas naquele mês → já viraram lançamento real (fixedTotal ou
+//    variableTotal), não soma aqui de novo.
+//  - Recorrentes (fixo) não pagas → soma o valor de referência (é um gasto
+//    esperado todo mês, mesmo que ainda não confirmado).
+//  - Avulsas não pagas → soma só no mês a que pertencem (mesRef).
+function getLembretesPrevistoParaMes(month){
+  if (typeof lembretes === 'undefined' || !lembretes.length) return 0;
+  let total = 0;
+  lembretes.forEach(l => {
+    if (!l || l.tipo === 'parcela') return;
+    const jaPago = !!(l.pago && l.pago[month] && l.pago[month].pago);
+    if (jaPago) return;
+    if (l.fixo) { total += Number(l.valor || 0); }
+    else if (getLembreteMesRef(l) === month) { total += Number(l.valor || 0); }
+  });
+  return total;
+}
+window.getLembretesPrevistoParaMes = getLembretesPrevistoParaMes;
 
 // ── vincularOrcamentoFixoLembrete ──────────────────────────────────────────
 // Garante que uma conta a pagar (lembrete) recorrente tenha uma categoria de
@@ -1894,18 +2017,22 @@ function loadLembretesFromCloud(){
 function renderLembretes(){
   const container = el('lembretes-list');
   if(!container) return;
-  const now = new Date();
-  const mes = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
-  const hoje = now.getDate();
+  const mes = getMesAtivo();
+  const mesRealAtual = new Date().toISOString().slice(0,7);
+  const isMesAtual = mes === mesRealAtual;
+  const isMesPassado = mes < mesRealAtual;
+  const hoje = new Date().getDate();
   if(!lembretes.length){
     container.innerHTML = '<div class="lembrete-empty small muted">Nenhuma conta. Clique em "+ Adicionar" para criar.</div>';
     return;
   }
 
-  // Lembretes-espelho de parcelamento (tipo:'parcela') só existem no mês se a
-  // série ainda tiver parcela ativa. Filtra fora os que não têm nada este mês.
+  // Lembretes-espelho de parcelamento só existem no mês se a série tiver
+  // parcela ativa. Contas avulsas só aparecem no mês a que pertencem (mesRef).
+  // Contas recorrentes (fixo) aparecem em todo mês.
   const visiveis = lembretes.filter(l => {
     if (l.tipo === 'parcela') return !!getParcelaLembreteInfo(l, mes);
+    if (!l.fixo) return getLembreteMesRef(l) === mes;
     return true;
   });
 
@@ -1928,9 +2055,17 @@ function renderLembretes(){
     const parcelaInfo = isParcela ? getParcelaLembreteInfo(l, mes) : null;
     const mesData = l.pago?.[mes]||{};
     const valorRef = isParcela ? (parcelaInfo ? parcelaInfo.valor : 0) : (mesData.valorReal!=null ? mesData.valorReal : (l.valor||0));
-    const diasR = (l.dia||0) - hoje;
-    const vencido = diasR < 0;
-    const urgente = diasR >= 0 && diasR <= 3;
+    // Urgência só faz sentido comparando com o dia real de hoje — só calcula
+    // isso quando o mês ativo é o mês real atual. Mês passado = sempre
+    // "vencida" se não paga; mês futuro = só mostra "Vence dia X", neutro.
+    let vencido = false, urgente = false, diasR = null;
+    if (isMesAtual) {
+      diasR = (l.dia||0) - hoje;
+      vencido = diasR < 0;
+      urgente = diasR >= 0 && diasR <= 3;
+    } else if (isMesPassado) {
+      vencido = true;
+    }
     let statusClass='lembrete-pendente', statusText=l.dia?`Vence dia ${l.dia}`:'Sem vencimento';
     if(pago)    { statusClass='lembrete-pago';    statusText = isParcela ? `Confirmada em ${mesData.dataPago||mes}` : `Pago em ${mesData.dataPago||mes} · ${formatMoney(valorRef)}`; }
     else if(vencido){ statusClass='lembrete-vencido'; statusText=`⚠️ Vencida (dia ${l.dia})`; }
@@ -1994,7 +2129,7 @@ function abrirConfirmarPagamento(id){
   const hintEl = el('lembrete-pagar-hint');
 
   if (isParcela) {
-    const mes = new Date().toISOString().slice(0,7);
+    const mes = getMesAtivo();
     const info = getParcelaLembreteInfo(l, mes);
     if (valorRow) valorRow.style.display = 'none';
     if (dataRow)  dataRow.style.display  = 'none';
@@ -2019,7 +2154,16 @@ function abrirConfirmarPagamento(id){
     const valorInp = el('lembrete-pagar-valor');
     if(valorInp) valorInp.value = l.valor>0 ? l.valor.toFixed(2) : '';
     const dataInp = el('lembrete-pagar-data');
-    if(dataInp) dataInp.value = new Date().toISOString().slice(0,10);
+    if(dataInp) {
+      const mesAtivo = getMesAtivo();
+      const mesRealAtual = new Date().toISOString().slice(0,7);
+      if (mesAtivo === mesRealAtual) {
+        dataInp.value = new Date().toISOString().slice(0,10);
+      } else {
+        const diaRef = l.dia ? String(Math.min(l.dia,28)).padStart(2,'0') : '01';
+        dataInp.value = `${mesAtivo}-${diaRef}`;
+      }
+    }
     const catInp = el('lembrete-pagar-cat');
     if(catInp) catInp.value = l.cat||'';
     if(hintEl){
@@ -2044,7 +2188,7 @@ el('lembrete-pagar-confirm')?.addEventListener('click', async()=>{
     const id = el('lembrete-pagar-id')?.value;
     const tipo = el('lembrete-pagar-tipo')?.value;
     const l = lembretes.find(x=>x.id===id); if(!l) return;
-    const mes = new Date().toISOString().slice(0,7);
+    const mes = getMesAtivo();
 
     // ── Lembrete-espelho de parcela: só marca como "confirmada" — a parcela
     // em si já está contabilizada normalmente, não cria lançamento nenhum. ──
@@ -2102,7 +2246,7 @@ el('lembrete-pagar-confirm')?.addEventListener('click', async()=>{
 
 async function cancelarPagamentoLembrete(id){
   const l = lembretes.find(x=>x.id===id); if(!l) return;
-  const mes = new Date().toISOString().slice(0,7);
+  const mes = getMesAtivo();
   const mesData = l.pago?.[mes];
   if(!mesData || !mesData.pago){ alert('Esta conta não está paga neste mês.'); return; }
 
@@ -2188,6 +2332,7 @@ function initLembretes(){
     const fixoRow = el('lembrete-fixo-row');
     const valorRow = el('lembrete-valor-row');
     const parcelaNote = el('lembrete-parcela-note');
+    el('lembrete-migrate-cat').value = '';
     if(id){
       const l=lembretes.find(x=>x.id===id); if(!l) return;
       const isParcela = l.tipo === 'parcela';
@@ -2216,11 +2361,40 @@ function initLembretes(){
     modal.style.display='flex';
   }
 
+  // ── openLembreteModalForCategoria ─────────────────────────────────────────
+  // Abre o mesmo modal de "Conta Mensal" pra editar uma categoria fixa
+  // LEGADA (criada direto em Orçamentos/lançamento, sem passar por Contas a
+  // Pagar). Ao salvar, ela vira um lembrete de verdade (Nome/Categoria/Valor/
+  // dia de vencimento/recorrente, tudo interligado) e a categoria antiga é
+  // removida — nada se perde, só migra de formato.
+  function openLembreteModalForCategoria(cat){
+    const modal=el('lembrete-modal-back'); if(!modal) return;
+    const fixoRow = el('lembrete-fixo-row');
+    const valorRow = el('lembrete-valor-row');
+    const parcelaNote = el('lembrete-parcela-note');
+    const b = state.budgets[cat] || {};
+    el('lembrete-modal-title').textContent = 'Editar Conta Mensal';
+    el('lembrete-edit-id').value = '';
+    el('lembrete-migrate-cat').value = cat;
+    el('lembrete-desc').value = cat;
+    el('lembrete-cat').value = cat;
+    el('lembrete-dia').value = '';
+    el('lembrete-valor').value = b.default || b.budget || 0;
+    if(el('lembrete-fixo')) el('lembrete-fixo').checked = true;
+    if (fixoRow) fixoRow.style.display = '';
+    if (valorRow) valorRow.style.display = '';
+    if (parcelaNote) parcelaNote.style.display = 'none';
+    populateLembreteCatSelect(cat);
+    modal.style.display='flex';
+  }
+  window.editContaMensalLegacy = cat => openLembreteModalForCategoria(cat);
+
   el('btn-add-lembrete')?.addEventListener('click',()=>openLembreteModal(null));
   el('lembrete-cancel')?.addEventListener('click',()=>{ const m=el('lembrete-modal-back');if(m)m.style.display='none'; });
 
   el('lembrete-save')?.addEventListener('click', async ()=>{
     const id=el('lembrete-edit-id')?.value;
+    const migrateCat=(el('lembrete-migrate-cat')?.value||'').trim();
     const desc=(el('lembrete-desc')?.value||'').trim();
     const cat=(el('lembrete-cat')?.value||'').trim();
     const dia=parseInt(el('lembrete-dia')?.value)||null;
@@ -2236,9 +2410,22 @@ function initLembretes(){
         if (l.tipo !== 'parcela') { l.fixo=fixo; l.valor=valor; }
       }
     } else {
-      lembretes.push({id:'l'+Date.now(),desc,cat,dia,fixo,valor,pago:{}});
+      lembretes.push({id:'l'+Date.now(),desc,cat,dia,fixo,valor,mesRef:getMesAtivo(),pago:{}});
+      if(migrateCat){
+        // Migração: a categoria fixa antiga vira lembrete de verdade — remove
+        // a categoria de orçamento legada (e overrides por mês, se houver).
+        delete state.budgets[migrateCat];
+        Object.keys(state.monthlyHistory||{}).forEach(m=>{
+          if(state.monthlyHistory[m]?.budgets?.[migrateCat]) delete state.monthlyHistory[m].budgets[migrateCat];
+        });
+        if(currentUser){
+          try { await deleteDoc(doc(db, 'users', currentUser.uid, 'budgets', migrateCat)); } catch(e){}
+        }
+        saveLocal();
+      }
     }
     saveLembretes();
+    el('lembrete-migrate-cat').value='';
     renderAll();
     el('lembrete-modal-back').style.display='none';
   });
@@ -2266,7 +2453,8 @@ function renderOrcamentoNovo(){
   const selMes=sel||mesAtual;
   const lembretesPendentes=(typeof lembretes!=='undefined'?lembretes:[])
     .filter(l=>!(l.pago?.[selMes]?.pago))
-    .filter(l=> l.tipo!=='parcela' || !!getParcelaLembreteInfo(l, selMes));
+    .filter(l=> l.tipo!=='parcela' || !!getParcelaLembreteInfo(l, selMes))
+    .filter(l=> l.fixo || l.tipo==='parcela' || getLembreteMesRef(l)===selMes);
   // getLembretesPendentesTotal já exclui contas mensais recorrentes (l.fixo),
   // porque essas já entram permanentemente no Total Planejado via orc.total —
   // sem isso o valor delas contaria em dobro aqui.
@@ -2454,7 +2642,9 @@ function renderAnalEvolucao(){
   }
   const rows=months.map(m=>{
     const t=calcTotals(m), o=calcOrcamentoTotal(m);
-    return {month:m,entradas:t.realReceita,saidas:t.variableTotal+t.fixedTotal+t.investTotal,planejado:o.total,saldo:t.realReceita-(t.variableTotal+t.fixedTotal+t.investTotal)};
+    const previstoLembretes=(typeof getLembretesPrevistoParaMes==='function')?getLembretesPrevistoParaMes(m):0;
+    const saidas=t.variableTotal+t.fixedTotal+(t.parcelasTotal||0)+t.investTotal+previstoLembretes;
+    return {month:m,entradas:t.realReceita,saidas,planejado:o.total,saldo:t.realReceita-saidas};
   });
   const tE=rows.reduce((s,r)=>s+r.entradas,0);
   const tS=rows.reduce((s,r)=>s+r.saidas,0);
@@ -2504,7 +2694,7 @@ function renderAnalCategorias(){
     const c2=el('tipoBarChart');
     if(c2&&typeof Chart!=='undefined'){
       if(window._tipoBarInst){window._tipoBarInst.destroy();window._tipoBarInst=null;}
-      window._tipoBarInst=new Chart(c2.getContext('2d'),{type:'bar',data:{labels:['Dia a Dia','Fixo','Investimento'],datasets:[{data:[totals.variableTotal,totals.fixedTotal,totals.investTotal],backgroundColor:['#F0483A','#F5A623','#8B5CF6'],borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{callback:v=>'R$'+Number(v).toLocaleString('pt-BR')}}}}});
+      window._tipoBarInst=new Chart(c2.getContext('2d'),{type:'bar',data:{labels:['Dia a Dia','Fixo','Parcelas','Investimento'],datasets:[{data:[totals.variableTotal,totals.fixedTotal,totals.parcelasTotal||0,totals.investTotal],backgroundColor:['#F0483A','#F5A623','#6366f1','#8B5CF6'],borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{callback:v=>'R$'+Number(v).toLocaleString('pt-BR')}}}}});
     }
   } catch(e){ console.warn('charts',e); }
 }
@@ -2520,7 +2710,10 @@ function renderAnalProjecao(){
     months.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
   }
   projecaoCards.innerHTML=months.map(m=>{
-    const t=calcTotals(m),saidas=t.variableTotal+t.fixedTotal+t.investTotal,saldo=t.realReceita-saidas;
+    const t=calcTotals(m);
+    const previstoLembretes=(typeof getLembretesPrevistoParaMes==='function')?getLembretesPrevistoParaMes(m):0;
+    const saidas=t.variableTotal+t.fixedTotal+(t.parcelasTotal||0)+t.investTotal+previstoLembretes;
+    const saldo=t.realReceita-saidas;
     const cur=m===now.toISOString().slice(0,7);
     return `<div class="proj-card ${cur?'proj-card-current':''}">
       <div class="proj-card-month">${m}</div>
