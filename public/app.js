@@ -1186,18 +1186,6 @@ const editBudget = (category) => {
       await renameBudgetCategory(cat, newCatName);
     }
 
-    if (wantLembrete && isFixed) {
-      // Fixa + lembrete = vira Conta Mensal de verdade (lembrete recorrente).
-      // A categoria de orçamento solta deixa de existir — tudo passa a viver
-      // no lembrete, igual às outras Contas Mensais.
-      const existente = lembretes.find(l => l && l.tipo !== 'parcela' && l.cat === newCatName);
-      if (existente) { existente.cat = newCatName; existente.dia = lembreteDia; existente.fixo = true; existente.valor = budget; }
-      else { lembretes.push({ id:'l'+Date.now(), desc:newCatName, cat:newCatName, dia:lembreteDia, fixo:true, valor:budget, mesRef:getMesAtivo(), pago:{} }); }
-      saveLembretes();
-      delete state.budgets[newCatName];
-      Object.keys(state.monthlyHistory||{}).forEach(m=>{ if(state.monthlyHistory[m]?.budgets?.[newCatName]) delete state.monthlyHistory[m].budgets[newCatName]; });
-      if (currentUser) { try { await deleteDoc(doc(db, 'users', currentUser.uid, 'budgets', newCatName)); } catch(e){} }
-      saveLocal();
     if (isFixed) {
       // "Custo fixo mensal" marcado = vira (ou atualiza) uma Conta Mensal de
       // verdade — sempre um lembrete-objeto agora, com ou sem lembrete ativo.
